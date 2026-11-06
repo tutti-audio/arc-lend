@@ -26,7 +26,7 @@ hdrhistogram = { version = "=7.6.0", default-features = false }
 # file and line numbers in `benches/compare/contenders.rs` are at these
 # versions.
 [dev-dependencies]
-arc-lend = { path = ".." }
+arc-lend = { path = "../../crates/arc-lend" }
 arc-swap = "=1.9.3"
 basedrop = "=0.1.3"
 left-right = "=0.11.8"
