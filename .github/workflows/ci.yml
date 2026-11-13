@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only a pull request cancels its own stale run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# Every stable job installs the toolchain `rust-toolchain.toml` pins
+# (`rustup toolchain install` with no argument reads it), and every cargo
+# command runs `--locked` against the committed `Cargo.lock`.
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --workspace
+      # The stress tests and the comparison harness's claims, optimised: a
+      # reordering a debug build hides can show here.
+      - run: cargo test --locked --workspace --release
+
+  # The `rust-version` in `Cargo.toml` builds and passes its tests.
+  msrv:
+    name: msrv
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - run: cargo +${{ steps.msrv.outputs.version }} test --locked -p arc-lend --lib --tests
+
+  doc:
+    name: rustdoc
+    runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --locked --no-deps -p arc-lend
+
+  # Miri checks the cell's memory-safety claims: the unit tests, the no-alloc
+  # gate and the doctests, then the unit tests again over 16 scheduling seeds.
+  # The small concurrent-readers stress test reports a race on a freed value if
+  # either `SeqCst` fence goes, on some seeds only.
+  miri:
+    name: miri
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly miri test --locked -p arc-lend
+      - run: cargo +nightly miri test --locked -p arc-lend --lib
+        env:
+          MIRIFLAGS: -Zmiri-many-seeds=0..16
+
+  # The loom models run the shipped protocol: under `--cfg loom` the cell's
+  # atomics, fences and mutex are loom's. Clippy runs here too, because the
+  # flag changes what the lints see. `registering_and_dropping_readers` is
+  # bounded at four preemptions; at five it takes about six minutes, which is
+  # the run to make by hand for a change to the protocol itself.
+  loom:
+    name: loom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUSTFLAGS: --cfg loom
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked -p arc-lend --all-targets -- -D warnings
+      - run: cargo test --locked -p arc-lend --release --test loom -- --skip registering_and_dropping_readers
+      - run: cargo test --locked -p arc-lend --release --test loom -- registering_and_dropping_readers --exact
+        env:
+          LOOM_MAX_PREEMPTIONS: 4
+
+  # Each benchmark once with tiny counts, so a bench that stops compiling or
+  # panics fails here rather than on the next measured run.
+  bench-smoke:
+    name: bench smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo bench --locked -p arc-lend --bench lend -- --test
+      - run: cargo bench --locked -p arc-lend-compare --bench compare -- --test
+
+  # The published crate builds from its packaged files alone.
+  package:
+    name: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo package --locked -p arc-lend
+
+  # The one check the ruleset requires. It passes when every other job
+  # succeeded; a job added to this file is added to `needs` here.
+  result:
+    name: CI result
+    if: always()
+    needs: [fmt, clippy, test, msrv, doc, miri, loom, bench-smoke, package]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null

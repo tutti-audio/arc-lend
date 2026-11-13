@@ -1,16 +1,18 @@
 [package]
 name = "arc-lend"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "A shared-value cell for threads on a deadline: one thread replaces the value while others read it without waiting or freeing"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/tutti-audio/tutti"
+repository = "https://github.com/tutti-audio/arc-lend"
+documentation = "https://docs.rs/arc-lend"
 readme = "README.md"
 keywords = ["arc", "realtime", "lock-free", "wait-free", "hazard-pointer"]
 categories = ["concurrency", "data-structures", "memory-management"]
-# Not published: whether and when this goes to crates.io is the maintainer's
-# call, not a side effect of a workspace change. Remove this line to publish.
+# The comparison harness and the repository's own setup are not part of the
+# published crate.
+exclude = ["/compare", "/.github", "/rust-toolchain.toml"]
 
 [lints]
 workspace = true
@@ -19,7 +21,7 @@ workspace = true
 # become loom's, so `tests/loom.rs` checks the shipped protocol rather than a
 # replica of it. Only that flag pulls loom in; a normal build never sees it.
 #
-#     LOOM_MAX_PREEMPTIONS=4 RUSTFLAGS="--cfg loom" cargo test -p arc-lend --release --test loom
+#     LOOM_MAX_PREEMPTIONS=4 RUSTFLAGS="--cfg loom" cargo test --release --test loom
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
 
@@ -30,8 +32,31 @@ loom = "0.7"
 arc-swap = "1.7"
 # `tests/no_alloc.rs`: the reader's code path runs inside an allocation gate.
 assert_no_alloc = { version = "1", default-features = false }
-criterion.workspace = true
+criterion = "0.8"
 
 [[bench]]
 name = "lend"
 harness = false
+
+# The crate and its comparison harness (`compare/`, never published).
+[workspace]
+members = ["compare"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.87"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+
+# `cfg(loom)` is set from the command line (`RUSTFLAGS="--cfg loom"`) to run
+# the loom models; `cfg(docsrs)` is set by docs.rs.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)', 'cfg(docsrs)'] }
+missing_docs = "warn"
+missing_debug_implementations = "deny"
+
+[workspace.lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

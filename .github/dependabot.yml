@@ -1,0 +1,27 @@
+# Monthly dependency updates, one pull request per ecosystem for patch
+# releases. The Rust toolchain (rust-toolchain.toml) is bumped by hand.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [patch]
+    commit-message:
+      prefix: build
+      include: scope
+    open-pull-requests-limit: 3
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope
+    open-pull-requests-limit: 1
