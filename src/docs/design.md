@@ -20,11 +20,17 @@ thread drops the last count frees the old value. When that thread is the
 one with the deadline, a free of arbitrary size runs inside the deadline,
 at a moment no test chose.
 
-Existing designs avoid this in a few ways, which the README compares: the
-writer waits for its readers, drops are routed to a collector thread, or
+Existing designs avoid this in a few ways, which [BENCHMARKS.md] compares:
+the writer waits for its readers, drops are routed to a collector thread, or
 users follow a discipline that keeps the last count off the reader. We
-wanted a cell whose readers *cannot* free, as a property of the types, and
-whose writer never waits on a reader.
+wanted a cell whose reads *cannot* free, as a property of the types, and
+whose writer never waits on a reader. A read is a lend and the loan it
+returns: neither holds an owning handle. The reader's other handles to the
+cell, [`Reader::cell`] and dropping the `Reader` itself, are ordinary
+`Arc` operations, and belong on the writer's side of the program.
+
+[BENCHMARKS.md]: https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md
+[`Reader::cell`]: crate::Reader::cell
 
 ## 2. Overview
 
@@ -99,7 +105,7 @@ shipped code is in `src/cell.rs`, `src/reader.rs` and `src/slots.rs`.
 
 ### 4.1. Registering a reader
 
-```rust,ignore
+```text
 // Under the control lock.
 fn register(&mut self) -> Reader {
     // Search from where the last registration stopped.
@@ -127,7 +133,7 @@ is as cheap as a lend.
 
 ### 4.2. A lend
 
-```rust,ignore
+```text
 fn lend(&mut self) -> Loan {
     self.slot.generation += 1; // on the slot, so a lend writes only the slot
     self.slot.word.store(claim(self.slot.generation), Release);
@@ -152,7 +158,7 @@ already orders the reader's earlier accesses (§5, case (b)).
 
 ### 4.3. A publish
 
-```rust,ignore
+```text
 // Under the control lock.
 fn publish(&mut self, value: Arc<T>) {
     // The only allocations, before anything changes.
@@ -176,13 +182,12 @@ The publisher never waits on a reader. It does not spin on a claim: the
 claim pins what the reader might load, and the next scan looks again. A
 held loan pins only its own value. We tried the alternatives before
 settling on this. A publish that waited on a held loan would deadlock a
-thread that lends and then publishes. One that waited on a claim, as an
-earlier version of this crate did, could be stalled by a reader
-descheduled between two of its instructions.
+thread that lends and then publishes. One that waited on a claim could be
+stalled by a reader descheduled between two of its instructions.
 
 ### 4.4. A reclaim
 
-```rust,ignore
+```text
 // Under the control lock.
 fn reclaim(&mut self) {
     if self.retired.is_empty() {
@@ -207,7 +212,7 @@ clears, and the next scan clears them in the same way.
 
 ### 4.5. A scan
 
-```rust,ignore
+```text
 fn scan(&mut self, freeable: &mut Vec<Arc<T>>) {
     fence(SeqCst);
     let mut floor = u64::MAX;
@@ -290,8 +295,9 @@ possibility in turn.
   which the next lend's fence precedes (a `SeqCst` fence is also a release
   fence). `S`'s `Acquire` read synchronizes with that write, so the
   reader's accesses through its loan of `V` happen before the scan, and so
-  before the free. This is why the claim is `Release`: without it, the
-  loom model's `claim_relaxed` mutation frees `V` under the previous loan.
+  before the free. This is why the claim is `Release`: a `Relaxed` claim
+  would order nothing before the scan, and `V` could be freed under the
+  previous loan.
 - **(c) A write by a later owner of the slot.** The registration that
   handed the slot on read the reader's `Release` drop of `owned` with
   `Acquire`, and ran under the mutex before `S`. The new owner's stores
@@ -368,7 +374,7 @@ and one claim record per slot.
 
 What these costs came to in practice, against `arc-swap`, `basedrop`,
 `left-right` and the locks, is in
-[BENCHMARKS.md](https://docs.rs/crate/arc-lend/latest/source/BENCHMARKS.md).
+[BENCHMARKS.md](https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md).
 
 ## 8. Verification
 
@@ -380,8 +386,7 @@ test explores none of its schedules. We rely instead on three checks.
   run a destructor. The compiler checks this.
 - **loom.** Under `--cfg loom`, the cell's atomics, fences and mutex are
   loom's, so `tests/loom.rs` explores the shipped code rather than a model
-  of it. Its mutation record lists, for each ordering in §5, the model
-  that fails when that ordering is weakened.
+  of it.
 - **miri.** Its weak-memory emulation runs the unit tests, including a
   multi-reader stress test, over many scheduling seeds.
 
@@ -406,8 +411,9 @@ the crate's documented or source-visible behaviour, checked against the
 version named; the sources are cited under [Sources](#sources).
 "Waits" means the operation can loop on another thread's progress. The
 claims about where a value is freed, and whether the writer waits, are
-also checked by running each cell, in `compare/tests/claims.rs` and
-`compare/tests/instruments.rs` (all but basedrop's spinning `replace`,
+also checked by running each cell, in the repository's
+[`compare/tests/claims.rs`](https://github.com/tutti-audio/arc-lend/blob/main/compare/tests/claims.rs)
+and [`compare/tests/instruments.rs`](https://github.com/tutti-audio/arc-lend/blob/main/compare/tests/instruments.rs) (all but basedrop's spinning `replace`,
 which no test can hold a reader inside).
 
 | | Reader holds | Reader frees? | Reader allocates? | Reader waits? | Writer waits on readers? | A reader preempted mid-read pins | Readers |
@@ -429,7 +435,7 @@ which no test can hold a reader inside).
 
 - **`arc-swap`** is the better general-purpose cell. Its loads cost about
   what a lend does (see
-  [the benchmark](https://docs.rs/crate/arc-lend/latest/source/BENCHMARKS.md)),
+  [the benchmark](https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md)),
   need no registration, and its writer's cost does not grow with the
   readers. A reader preempted mid-load pins only the value it loaded,
   where arc-lend's pins everything retired meanwhile: under a fast

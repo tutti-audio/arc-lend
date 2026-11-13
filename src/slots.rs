@@ -37,8 +37,8 @@ impl Word {
         (generation << 1) | 1
     }
 
-    /// Returns the announcement of `ptr`, which came from [`Arc::into_raw`]
-    /// and so is even and nonzero.
+    /// Returns the announcement of `ptr`, which the cell stored and so checked
+    /// even and nonzero (`current::into_stored`).
     #[inline]
     pub(crate) fn announcement<T>(ptr: NonNull<T>) -> usize {
         let addr = ptr.as_ptr().addr();

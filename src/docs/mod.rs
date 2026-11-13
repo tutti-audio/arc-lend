@@ -5,7 +5,7 @@
 //!   operation costs.
 //!
 //! Measurements against other cells are in
-//! [BENCHMARKS.md](https://docs.rs/crate/arc-lend/latest/source/BENCHMARKS.md).
+//! [BENCHMARKS.md](https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md).
 
 #[doc = include_str!("design.md")]
 pub mod design {}

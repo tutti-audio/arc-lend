@@ -10,6 +10,17 @@ updates:
       cargo:
         patterns: ["*"]
         update-types: [patch]
+    # The comparison harness pins its contenders exactly, so a re-run
+    # measures the same code; a contender moves by hand, with a new run.
+    ignore:
+      - dependency-name: arc-swap
+      - dependency-name: basedrop
+      - dependency-name: left-right
+      - dependency-name: crossbeam-epoch
+      - dependency-name: haphazard
+      - dependency-name: triple_buffer
+      - dependency-name: core_affinity
+      - dependency-name: hdrhistogram
     commit-message:
       prefix: build
       include: scope

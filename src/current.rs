@@ -25,10 +25,28 @@ pub(crate) struct Current<T> {
     _owns: PhantomData<Arc<T>>,
 }
 
+/// Gives up `value`'s strong count as the raw pointer the cell stores.
+///
+/// A slot tells an announcement from a claim by the low bit, so every stored
+/// pointer must be even. An `Arc`'s data sits after its two counts, so its
+/// address is aligned to at least a `usize`; this checks it once, on the
+/// control side, before any reader can load the pointer.
+///
+/// # Panics
+///
+/// If the pointer is odd, which no `Arc` layout std has used produces.
+fn into_stored<T>(value: Arc<T>) -> *mut T {
+    assert!(
+        Arc::as_ptr(&value).addr() & 1 == 0,
+        "an `Arc`'s data pointer is even"
+    );
+    Arc::into_raw(value).cast_mut()
+}
+
 impl<T> Current<T> {
     pub(crate) fn new(value: Arc<T>) -> Self {
         Self {
-            ptr: Padded(AtomicPtr::new(Arc::into_raw(value).cast_mut())),
+            ptr: Padded(AtomicPtr::new(into_stored(value))),
             _owns: PhantomData,
         }
     }
@@ -57,10 +75,7 @@ impl<T> Current<T> {
     /// reaches the free through the scan's `Acquire` slot reads. (`AcqRel`
     /// here was redundant with the lock.)
     pub(crate) fn swap(&self, value: Arc<T>) -> Arc<T> {
-        let old = self
-            .ptr
-            .0
-            .swap(Arc::into_raw(value).cast_mut(), Ordering::Release);
+        let old = self.ptr.0.swap(into_stored(value), Ordering::Release);
         // SAFETY: `old` came out of `ptr`, which only ever holds a pointer
         // from `Arc::into_raw` whose strong count the cell owns. The swap
         // removed it, so this is the one place that count is reclaimed.

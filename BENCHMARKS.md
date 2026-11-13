@@ -9,9 +9,9 @@ parked reader keeps alive. arc-lend loses some of these, and we report the
 losses next to the wins.
 
 The harness is the `arc-lend-compare` crate
-([`compare/`](compare/)). Every table below, except section 8's, is copied
+([`compare/`](https://github.com/tutti-audio/arc-lend/blob/main/compare/)). Every table below, except section 8's, is copied
 by script from one recorded run, whose raw output is committed as
-[`compare/results/2026-10-27-ryzen9-9950x.txt`](compare/results/2026-10-27-ryzen9-9950x.txt);
+[`compare/results/2026-10-27-ryzen9-9950x.txt`](https://github.com/tutti-audio/arc-lend/blob/main/compare/results/2026-10-27-ryzen9-9950x.txt);
 no figure was edited by hand. Two earlier runs, on a shared 4-vCPU cloud
 VM, are kept beside it for reference.
 
@@ -990,7 +990,7 @@ alone. The difference is the retired list's filter.
 
 Not part of the Ryzen run above: this section was added later and is
 recorded on its own, in
-[`compare/results/2026-11-03-container-4vcpu-concurrent-lends.txt`](compare/results/2026-11-03-container-4vcpu-concurrent-lends.txt).
+[`compare/results/2026-11-03-container-4vcpu-concurrent-lends.txt`](https://github.com/tutti-audio/arc-lend/blob/main/compare/results/2026-11-03-container-4vcpu-concurrent-lends.txt).
 Reproduce it with
 
 ```bash

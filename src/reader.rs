@@ -34,6 +34,7 @@ use crate::sync::{Ordering, fence};
 /// let cell = std::sync::Arc::new(arc_lend::ArcLend::new(1u32));
 /// shared(&cell.reader()); // `Reader` is not `Sync`
 /// ```
+#[must_use = "a reader dropped at once frees the slot it registered; keep it to lend"]
 pub struct Reader<T> {
     /// Keeps the cell, and so this reader's slot, alive.
     cell: Arc<ArcLend<T>>,
@@ -151,14 +152,18 @@ impl<T> Reader<T> {
     /// Returns the cell this reader reads.
     ///
     /// Handy for publishing to the cell, or registering another reader, from
-    /// wherever the reader is kept.
+    /// wherever the reader is kept. Those are writer-side calls: they lock,
+    /// may allocate and may free, so make them off the reading thread's
+    /// deadline. Only [`lend`](Self::lend) and its [`Loan`] are free-free.
+    #[must_use]
     pub fn cell(&self) -> &Arc<ArcLend<T>> {
         &self.cell
     }
 }
 
 impl<T> Clone for Reader<T> {
-    /// Registers another reader of the same cell, like [`ArcLend::reader`].
+    /// Registers another reader of the same cell, like [`ArcLend::reader`]:
+    /// it locks and may allocate, so clone on the writer's side.
     fn clone(&self) -> Self {
         self.cell.reader()
     }

@@ -185,6 +185,11 @@ impl<T> ArcLend<T> {
     /// It never waits on a reader. An old value a reader still holds, or may
     /// be about to read, is kept and checked again by the next `publish` or
     /// [`reclaim`](Self::reclaim). The frees run after the lock is released.
+    ///
+    /// # Panics
+    ///
+    /// If an old value's destructor panics, the panic reaches the caller once
+    /// the lock is released; the cell stays usable, holding the new value.
     pub fn publish(&self, value: impl Into<Arc<T>>) {
         // Wrapping a `T` allocates, here, before the lock: if it panics,
         // nothing has changed.
@@ -238,6 +243,10 @@ impl<T> ArcLend<T> {
     ///
     /// When nothing is waiting it is only a lock and a length check, so it
     /// can be called every tick, for every cell.
+    ///
+    /// # Panics
+    ///
+    /// If an old value's destructor panics, as for [`publish`](Self::publish).
     pub fn reclaim(&self) -> usize {
         let (freeable, pinned) = {
             let mut control = self.lock();
@@ -281,6 +290,7 @@ impl<T> ArcLend<T> {
     /// (see [`docs::guide`](crate::docs::guide)). What to do
     /// about a count that stays high is the caller's policy: the cell itself
     /// neither asserts nor logs.
+    #[must_use]
     pub fn retired_len(&self) -> usize {
         self.lock().retired.len()
     }

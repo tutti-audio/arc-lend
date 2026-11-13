@@ -139,8 +139,9 @@ impl Drop for Tracked {
 
 /// No preemption bound of its own: exhaustive unless `LOOM_MAX_PREEMPTIONS`
 /// is set. CI runs every model unbounded but
-/// `registering_and_dropping_readers`, which it bounds at 4 and 5 (at 6 it
-/// did not finish in 25 minutes):
+/// `registering_and_dropping_readers`, which it bounds at 4. At 5 it takes about
+/// six minutes, the run to make by hand for a change to the protocol itself; at 6
+/// it did not finish in 25 minutes:
 ///
 /// ```text
 /// RUSTFLAGS="--cfg loom" cargo test --release --test loom -- --skip registering_and_dropping_readers

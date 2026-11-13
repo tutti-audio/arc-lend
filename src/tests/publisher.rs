@@ -41,7 +41,17 @@ fn a_panicking_destructor_does_not_poison_the_cell() {
 fn a_publish_hands_its_buffer_to_the_next() {
     let cell = Arc::new(ArcLend::new(0u32));
     cell.publish(Arc::new(1));
-    assert!(cell.lock().spare.capacity() > 0);
+    let first = cell.lock().spare.as_ptr();
+    assert!(
+        cell.lock().spare.capacity() > 0,
+        "the freeing publish kept its buffer"
+    );
+    cell.publish(Arc::new(2));
+    assert_eq!(
+        cell.lock().spare.as_ptr(),
+        first,
+        "the next publish freed into the same buffer and handed it on"
+    );
 }
 
 /// `Debug` formats the value with the cell's lock released, so a payload

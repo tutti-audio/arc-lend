@@ -97,17 +97,16 @@
 //! - [Design notes][design]: how it works, and why we believe it is safe.
 //!
 //! [`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
-//! [`RwLock`]: https://doc.rust-lang.org/std/sync/struct.RwLock.html
 //! [`ArcSwap`]: https://docs.rs/arc-swap
-//! [`ArcLend`]: https://docs.rs/arc-lend/latest/arc_lend/struct.ArcLend.html
-//! [`Reader`]: https://docs.rs/arc-lend/latest/arc_lend/struct.Reader.html
-//! [`Loan`]: https://docs.rs/arc-lend/latest/arc_lend/struct.Loan.html
-//! [`publish`]: https://docs.rs/arc-lend/latest/arc_lend/struct.ArcLend.html#method.publish
-//! [`current`]: https://docs.rs/arc-lend/latest/arc_lend/struct.ArcLend.html#method.current
-//! [`lend`]: https://docs.rs/arc-lend/latest/arc_lend/struct.Reader.html#method.lend
-//! [guide]: https://docs.rs/arc-lend/latest/arc_lend/docs/guide/index.html
-//! [benchmarks]: https://docs.rs/crate/arc-lend/latest/source/BENCHMARKS.md
-//! [design]: https://docs.rs/arc-lend/latest/arc_lend/docs/design/index.html
+//! [`ArcLend`]: crate::ArcLend
+//! [`Reader`]: crate::Reader
+//! [`Loan`]: crate::Loan
+//! [`publish`]: crate::ArcLend::publish
+//! [`current`]: crate::ArcLend::current
+//! [`lend`]: crate::Reader::lend
+//! [guide]: crate::docs::guide
+//! [benchmarks]: https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md
+//! [design]: crate::docs::design
 #![deny(clippy::undocumented_unsafe_blocks, clippy::missing_safety_doc)]
 
 mod cell;
