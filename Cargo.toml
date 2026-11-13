@@ -44,7 +44,7 @@ members = ["compare"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.88"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
