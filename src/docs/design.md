@@ -351,7 +351,7 @@ the scan keep more, never free early.
 
 **The guarantee.** If a loan reports `seq() == k`, its value is the one
 published as number `k` or a later one. So the number is never newer than the
-value: a reader can be told "changed" for a change it already holds, and is
+value (where it does not wrap, see *Width*): a reader can be told "changed" for a change it already holds, and is
 never told "unchanged" over one it has missed.
 
 A publish makes number `n` as two writes in program order, under the mutex:
@@ -376,11 +376,11 @@ reports `m` or later. This is the one-sided error the contract allows.
 
 *Why a reader misses nothing for good.* A reader's loads of `published_seq`
 read it in modification order (read-read coherence), so its numbers never go
-down. Once publishing stops with the last number `n`, every store is
-eventually visible, and a lend that starts after `N_n` is visible reads `n`
-at `Q` and the final value at `R`. A reader that compares each number with
+down. Once the last publish `n` happens before a lend (a thread join, or
+a flag read with `Acquire`), `N_n` is visible to it, and it reads `n` at
+`Q` and the final value at `R`. A reader that compares each number with
 the last it saw therefore sees a difference after each publish, at the
-latest on its first lend after publishing ends.
+latest on its first lend after the last publish happens before it.
 
 *Why the load does not weaken §5's protocol.* `Q` is a load of an integer
 that is never dereferenced and never announced. Step 1 of §5 rests on `C`,
@@ -390,9 +390,11 @@ no edge those steps use, and the publisher's `N_n` is after `X_n` and before
 reads `published_seq`: it reads `seq`, under the mutex.
 
 *Width.* On a target with 64-bit atomics `published_seq` is an `AtomicU64`.
-Without them it is an `AtomicUsize` holding the low 32 bits of `seq`; the
-reported number then wraps at 2^32 publishes, and a reader that lends less
-often than that could see a number repeat. `seq` itself, which the scan
+Without them it is an `AtomicUsize` holding the low `usize::BITS` bits of
+`seq`; the reported number then wraps at 2^`usize::BITS` publishes (2^32 on
+a 32-bit target, 2^16 on a 16-bit one). A wrap makes the number go down, so
+the guarantee and the monotonicity above hold between wraps only, and a
+reader that lends less often than once per wrap could see a number repeat. `seq` itself, which the scan
 uses, stays a `u64` under the mutex.
 
 ## 6. What a reader can pin

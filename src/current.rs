@@ -87,8 +87,8 @@ impl<T> Current<T> {
         self.ptr.0.seq.load(Ordering::Acquire)
     }
 
-    /// Swaps `value` in as publish number `seq`, and returns the outgoing value for the caller to
-    /// retire.
+    /// Swaps `value` in as publish number `seq`, and returns the outgoing
+    /// value for the caller to retire.
     ///
     /// Readers may still hold the outgoing value: dropping what this returns
     /// is the caller's decision, made by the scan.

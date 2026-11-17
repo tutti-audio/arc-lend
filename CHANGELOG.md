@@ -16,11 +16,12 @@ release may break the API.
   the next. A loan reports the number of the lent value or of an earlier one,
   never a later one, so a reader that remembers the last number it saw and
   compares it on each lend gets a false "changed" at most and never misses a
-  change: once publishing stops, its next lend reports the final number with
-  the final value. The number is read in `lend` with one more `Acquire` load,
+  change: once the last publish happens-before a lend (a join, or a flag read
+  with `Acquire`), that lend reports the final number with the final value. The number is read in `lend` with one more `Acquire` load,
   from the line the pointer is on, after the claim's fence; the claim,
   announce and scan protocol is unchanged (`docs::design`, §5.2). On a target
-  without 64-bit atomics the number is kept in a `usize` and wraps at 2^32.
+  without 64-bit atomics the number is kept in a `usize` and wraps at 2^`usize::BITS`, so the guarantees hold
+  there between wraps.
 
 ## [0.2.0] - 2026-11-17
 

@@ -247,9 +247,15 @@ impl<T> Loan<'_, T> {
     ///   number `n`, if a publish landed between the lend's two loads. Its
     ///   next lend then reports a newer number.
     /// - A reader that compares each lend's number with the last one it saw
-    ///   misses no change for good: once publishing stops, its next lend
+    ///   misses no change for good: once the last publish happens-before a
+    ///   lend (a thread join, or a flag read with `Acquire`), that lend
     ///   reports the final number, with the final value.
     /// - One reader's numbers never go down from one lend to the next.
+    ///
+    /// These hold where the number is 64 bits, and on a target without
+    /// 64-bit atomics between wraps (see "Wrapping"): a wrap makes the number
+    /// go down, and so can be newer than the value or older than a
+    /// previous lend's.
     ///
     /// Compare for inequality, not for order across readers: two readers
     /// that lend at the same moment may report different numbers for the
@@ -259,9 +265,9 @@ impl<T> Loan<'_, T> {
     ///
     /// The number is a `u64` and counts publishes; it does not wrap in any
     /// run that fits in a lifetime. On a target without 64-bit atomics it is
-    /// kept in a `usize`, and wraps at 2^32 publishes: a reader that lends
-    /// less often than once in 2^32 publishes may then see the same number
-    /// again.
+    /// kept in a `usize`, and wraps at 2^`usize::BITS` publishes (2^32 on a
+    /// 32-bit target): a reader that lends less often than once per wrap may
+    /// then see the same number again.
     ///
     /// # Examples
     ///

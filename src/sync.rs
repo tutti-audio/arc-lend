@@ -17,7 +17,7 @@ pub(crate) use std::{
 #[cfg(any(loom, target_has_atomic = "64"))]
 type RawSeq = AtomicU64;
 /// The publish counter's atomic on a target without 64-bit atomics: a
-/// `usize`, so the counter wraps at 2^32 there (`Loan::seq`, "Wrapping").
+/// `usize`, so the counter wraps at 2^`usize::BITS` there (`Loan::seq`, "Wrapping").
 #[cfg(not(any(loom, target_has_atomic = "64")))]
 type RawSeq = AtomicUsize;
 

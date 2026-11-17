@@ -24,9 +24,9 @@ use crate::shared::Shared;
 /// Everything that locks, allocates or frees is a method of the `Publisher`:
 /// [`publish`](Self::publish), [`reclaim`](Self::reclaim),
 /// [`current`](Self::current), [`seq`](Self::seq),
-/// [`retired_len`](Self::retired_len) and [`reader`](Self::reader). A [`Reader`] has [`lend`](Reader::lend) and
-/// nothing else, and holds no `Publisher`, so the thread that reads cannot
-/// reach a writer-side call.
+/// [`retired_len`](Self::retired_len) and [`reader`](Self::reader). A
+/// [`Reader`] has [`lend`](Reader::lend) and nothing else, and holds no
+/// `Publisher`, so the thread that reads cannot reach a writer-side call.
 ///
 /// # Cloning
 ///
@@ -182,7 +182,9 @@ impl<T> Publisher<T> {
     /// is number 0, and each [`publish`](Self::publish) makes the next
     /// number. It takes the cell's lock, so it is exact: a [`Loan`](crate::Loan)
     /// taken afterwards reports this number or a later one
-    /// ([`Loan::seq`](crate::Loan::seq)).
+    /// ([`Loan::seq`](crate::Loan::seq)). On a target without 64-bit atomics
+    /// a loan's number is truncated to `usize::BITS` bits and this one is not,
+    /// so they agree only until the count passes 2^`usize::BITS`.
     ///
     /// ```
     /// use arc_lend::Publisher;
