@@ -1,6 +1,6 @@
 [package]
 name = "arc-lend"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "A shared-value cell for threads on a deadline: one thread replaces the value while others read it without waiting or freeing"

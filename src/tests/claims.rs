@@ -13,7 +13,7 @@ use super::*;
 #[cfg_attr(miri, ignore = "waits on a wall-clock deadline")]
 fn the_publisher_never_waits_on_a_reader_mid_lend() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
     let mut reader = cell.reader();
     claim_only(&mut reader);
 
@@ -52,7 +52,7 @@ fn the_publisher_never_waits_on_a_reader_mid_lend() {
 #[test]
 fn a_claim_seen_before_keeps_its_floor() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
     let mut reader = cell.reader();
 
     claim_only(&mut reader);
@@ -71,7 +71,7 @@ fn a_claim_seen_before_keeps_its_floor() {
 #[test]
 fn a_new_claim_pins_only_from_the_last_scan() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
     let mut reader = cell.reader();
 
     claim_only(&mut reader);

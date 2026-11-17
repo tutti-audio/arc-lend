@@ -1,4 +1,4 @@
-//! A `loom` model of `ArcLend`'s reclamation protocol: the shipped code, not
+//! A `loom` model of the `Publisher`'s reclamation protocol: the shipped code, not
 //! a replica.
 //!
 //! ```text
@@ -46,7 +46,7 @@
 
 #![cfg(loom)]
 
-use arc_lend::ArcLend;
+use arc_lend::Publisher;
 use loom::cell::UnsafeCell;
 use loom::sync::Mutex;
 use loom::sync::atomic::{AtomicBool, Ordering};
@@ -93,7 +93,7 @@ struct Tracked {
     tracker: std::sync::Arc<Tracker>,
 }
 
-// SAFETY (test): `ArcLend<T>` is shared only when `T: Send + Sync`, and
+// SAFETY (test): `Publisher<T>` is shared only when `T: Send + Sync`, and
 // loom's `UnsafeCell` is not `Sync`. Sharing it is exactly what the model is
 // checking: readers only `with` (shared), the drop only `with_mut`
 // (exclusive), and loom flags any pair of those that is not ordered by
@@ -151,16 +151,16 @@ fn model(f: impl Fn() + Sync + Send + 'static) {
     loom::model::Builder::new().check(f);
 }
 
-type Cell = std::sync::Arc<ArcLend<Tracked>>;
+type Cell = Publisher<Tracked>;
 
 fn cell(tracker: &std::sync::Arc<Tracker>) -> Cell {
-    std::sync::Arc::new(ArcLend::from_arc(tracker.make(0)))
+    Publisher::from_arc(tracker.make(0))
 }
 
-/// Drops the cell (it must be the last handle) and checks every value went,
-/// none on a reader.
+/// Drops the publisher (the last handle: every reader and every clone of it
+/// is gone) and checks every value went, none on a reader.
 fn finish(cell: Cell, tracker: &Tracker, readers: &[thread::ThreadId]) {
-    drop(std::sync::Arc::into_inner(cell).expect("every reader is dropped"));
+    drop(cell);
     tracker.assert_all_freed_off(readers);
 }
 

@@ -8,36 +8,50 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::Ordering as StdOrdering;
 
-use crate::cell::ArcLend;
+use crate::shared::Shared;
 use crate::slots::{FREE, Slot, Word};
 use crate::sync::{Ordering, fence};
 
-/// One thread's registration to read an [`ArcLend`].
+/// One thread's registration to read a [`Publisher`](crate::Publisher)'s value.
 ///
-/// Made by [`ArcLend::reader`] on the writer's side, then moved to the thread
-/// that reads. Borrow the value with [`lend`](Self::lend), once per
-/// iteration.
+/// Made by [`Publisher::reader`](crate::Publisher::reader) on the writer's side, then moved to the
+/// thread that reads. Borrow the value with [`lend`](Self::lend), once per
+/// iteration. `lend` is all a reader can do: it holds no [`Publisher`](crate::Publisher), and
+/// has no way to reach one.
 ///
 /// - **`Send`, not `Sync`.** It lends through `&mut self`, so it has at most
 ///   one live [`Loan`]. Code that reads one cell at two levels of nesting
 ///   needs one reader per level.
-/// - **Cloning registers another reader**, so clone on the writer's side:
-///   it locks and may allocate. The clone shares only the cell with the
-///   original.
-/// - **Dropping it** gives its slot back for reuse, and drops its `Arc` of
-///   the cell (see [`ArcLend`], "Dropping the cell").
+/// - **Not `Clone`.** Registering is a writer-side act (it locks and may
+///   allocate), so another reader comes from [`Publisher::reader`](crate::Publisher::reader).
+/// - **Dropping it** gives its slot back for reuse, and drops its share of
+///   the cell (see [`Publisher`](crate::Publisher), "Dropping the cell").
+///
+/// It is not `Clone`, and has no way to reach its cell:
+///
+/// ```compile_fail
+/// fn cloned<X: Clone>(_: &X) {}
+/// let publisher = arc_lend::Publisher::new(1u32);
+/// cloned(&publisher.reader()); // `Reader` is not `Clone`
+/// ```
+///
+/// ```compile_fail
+/// let publisher = arc_lend::Publisher::new(1u32);
+/// let reader = publisher.reader();
+/// reader.cell().publish(2); // there is no `Reader::cell`
+/// ```
 ///
 /// It is `!Sync`:
 ///
 /// ```compile_fail
 /// fn shared<X: Sync>(_: &X) {}
-/// let cell = std::sync::Arc::new(arc_lend::ArcLend::new(1u32));
-/// shared(&cell.reader()); // `Reader` is not `Sync`
+/// let publisher = arc_lend::Publisher::new(1u32);
+/// shared(&publisher.reader()); // `Reader` is not `Sync`
 /// ```
 #[must_use = "a reader dropped at once frees the slot it registered; keep it to lend"]
 pub struct Reader<T> {
     /// Keeps the cell, and so this reader's slot, alive.
-    cell: Arc<ArcLend<T>>,
+    cell: Arc<Shared<T>>,
     /// This reader's slot, in a block the cell owns. Blocks never move and are
     /// freed only with the cell, which `cell` keeps alive.
     slot: NonNull<Slot>,
@@ -47,7 +61,7 @@ pub struct Reader<T> {
     _not_sync: PhantomData<Cell<()>>,
 }
 
-// SAFETY: a `Reader` is an `Arc<ArcLend<T>>` (which is `Send` exactly when
+// SAFETY: a `Reader` is an `Arc<Shared<T>>` (which is `Send` exactly when
 // `T: Send + Sync`) and a pointer to a slot inside that cell: atomics owned
 // by this reader, two of them read by the publisher. Moving the reader
 // to another thread moves that ownership with it; nothing in the slot is tied
@@ -57,7 +71,7 @@ unsafe impl<T: Send + Sync> Send for Reader<T> {}
 impl<T> Reader<T> {
     /// Creates a reader of `cell` on `slot`, which
     /// [`Slots::register`](crate::slots::Slots) just handed out.
-    pub(crate) fn new(cell: Arc<ArcLend<T>>, slot: NonNull<Slot>) -> Self {
+    pub(crate) fn new(cell: Arc<Shared<T>>, slot: NonNull<Slot>) -> Self {
         Self {
             cell,
             slot,
@@ -99,8 +113,8 @@ impl<T> Reader<T> {
     /// loan is alive does not compile:
     ///
     /// ```compile_fail
-    /// let cell = std::sync::Arc::new(arc_lend::ArcLend::new(1u32));
-    /// let mut reader = cell.reader();
+    /// let publisher = arc_lend::Publisher::new(1u32);
+    /// let mut reader = publisher.reader();
     /// let a = reader.lend();
     /// let b = reader.lend(); // a second reader is needed for this
     /// assert_eq!(*a + *b, 2);
@@ -111,8 +125,8 @@ impl<T> Reader<T> {
     ///
     /// ```compile_fail
     /// #![deny(unused_must_use)]
-    /// let cell = std::sync::Arc::new(arc_lend::ArcLend::new(1u32));
-    /// let mut reader = cell.reader();
+    /// let publisher = arc_lend::Publisher::new(1u32);
+    /// let mut reader = publisher.reader();
     /// reader.lend(); // claimed, announced and released, and never read
     /// ```
     #[inline]
@@ -148,25 +162,6 @@ impl<T> Reader<T> {
             _not_send: PhantomData,
         }
     }
-
-    /// Returns the cell this reader reads.
-    ///
-    /// Handy for publishing to the cell, or registering another reader, from
-    /// wherever the reader is kept. Those are writer-side calls: they lock,
-    /// may allocate and may free, so make them off the reading thread's
-    /// deadline. Only [`lend`](Self::lend) and its [`Loan`] are free-free.
-    #[must_use]
-    pub fn cell(&self) -> &Arc<ArcLend<T>> {
-        &self.cell
-    }
-}
-
-impl<T> Clone for Reader<T> {
-    /// Registers another reader of the same cell, like [`ArcLend::reader`]:
-    /// it locks and may allocate, so clone on the writer's side.
-    fn clone(&self) -> Self {
-        self.cell.reader()
-    }
 }
 
 impl<T> Drop for Reader<T> {
@@ -186,7 +181,7 @@ impl<T> std::fmt::Debug for Reader<T> {
     }
 }
 
-/// A borrow of an [`ArcLend`]'s value, returned by [`Reader::lend`].
+/// A borrow of a [`Publisher`](crate::Publisher)'s value, returned by [`Reader::lend`].
 ///
 /// Dereferences to the value. Dropping it marks the reader as done and does
 /// nothing else, so it can never free the value. There is deliberately no way
@@ -197,8 +192,8 @@ impl<T> std::fmt::Debug for Reader<T> {
 /// again until it drops. Hold it for one iteration of the loop.
 ///
 /// ```compile_fail
-/// let cell = std::sync::Arc::new(arc_lend::ArcLend::new(1u32));
-/// let mut reader = cell.reader();
+/// let publisher = arc_lend::Publisher::new(1u32);
+/// let mut reader = publisher.reader();
 /// let loan = reader.lend();
 /// std::thread::scope(|s| {
 ///     s.spawn(move || *loan); // `Loan` is not `Send`

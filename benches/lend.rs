@@ -16,13 +16,13 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use arc_lend::ArcLend;
+use arc_lend::Publisher;
 use arc_swap::ArcSwap;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 fn uncontended(c: &mut Criterion) {
     let mut g = c.benchmark_group("read_uncontended");
-    let cell = Arc::new(ArcLend::new([7u64; 8]));
+    let cell = Publisher::new([7u64; 8]);
     let mut reader = cell.reader();
     g.bench_function("arc_lend", |b| b.iter(|| black_box(reader.lend()[3])));
     let swap = ArcSwap::from_pointee([7u64; 8]);
@@ -49,7 +49,7 @@ fn with_publisher(publish: impl Fn() + Send + 'static, bench: impl FnOnce()) {
 fn while_publishing(c: &mut Criterion) {
     let mut g = c.benchmark_group("read_while_publishing");
 
-    let cell = Arc::new(ArcLend::new([7u64; 8]));
+    let cell = Publisher::new([7u64; 8]);
     let mut reader = cell.reader();
     let writer = cell.clone();
     with_publisher(

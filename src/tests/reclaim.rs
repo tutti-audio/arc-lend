@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn a_lend_sees_the_published_value() {
-    let cell = Arc::new(ArcLend::new(vec![1u32, 2, 3]));
+    let cell = Publisher::new(vec![1u32, 2, 3]);
     let mut reader = cell.reader();
     assert_eq!(&*reader.lend(), &[1, 2, 3]);
 
@@ -17,7 +17,7 @@ fn a_held_loan_keeps_seeing_its_own_snapshot() {
     // The iteration-scoped contract in miniature: a reader that took a value
     // before a publish keeps working with it, rather than tearing
     // mid-iteration.
-    let cell = Arc::new(ArcLend::new(vec![1u32]));
+    let cell = Publisher::new(vec![1u32]);
     let (mut a, mut b) = (cell.reader(), cell.reader());
     let held = a.lend();
 
@@ -41,7 +41,7 @@ fn publish_frees_the_retired_value_on_the_publishing_thread() {
     }
 
     let dropped = Arc::new(StdAtomicBool::new(false));
-    let cell = Arc::new(ArcLend::new(Tattle(dropped.clone())));
+    let cell = Publisher::new(Tattle(dropped.clone()));
     let _reader = cell.reader();
 
     assert!(!dropped.load(StdOrdering::SeqCst));
@@ -59,7 +59,7 @@ fn publish_frees_the_retired_value_on_the_publishing_thread() {
 #[test]
 fn a_reader_releasing_a_retired_value_never_frees_it() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
 
     let (took_tx, took_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel::<()>();
@@ -105,7 +105,7 @@ fn a_reader_releasing_a_retired_value_never_frees_it() {
 #[test]
 fn a_loan_protects_only_the_value_it_announced() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
     let mut reader = cell.reader();
 
     let held = reader.lend();
@@ -120,7 +120,7 @@ fn a_loan_protects_only_the_value_it_announced() {
     drop(held);
     drop(reader);
 
-    drop(Arc::into_inner(cell).unwrap());
+    drop(cell);
     let mut ids = freed(&sites);
     ids.sort_unstable();
     assert_eq!(
@@ -136,7 +136,7 @@ fn a_loan_protects_only_the_value_it_announced() {
 #[test]
 fn parked_loans_pin_one_value_per_reader() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
     let mut readers: Vec<_> = (0..12).map(|_| cell.reader()).collect();
 
     // A staircase: each reader lends, then a publish retires what it holds.
@@ -169,7 +169,7 @@ fn parked_loans_pin_one_value_per_reader() {
 #[test]
 fn reclaim_frees_without_publishing_and_reports_what_is_pinned() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
     let (mut a, mut b) = (cell.reader(), cell.reader());
 
     let held_0 = a.lend();

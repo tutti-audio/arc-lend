@@ -23,7 +23,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::Ordering::{Acquire, SeqCst};
 use std::sync::{Arc, Mutex, RwLock};
 
-use arc_lend::ArcLend;
+use arc_lend::Publisher;
 use arc_lend_compare::Payload;
 use arc_swap::{ArcSwap, ArcSwapAny, IndependentStrategy};
 
@@ -98,7 +98,7 @@ pub trait Contender: 'static {
 // arc-lend
 // ---------------------------------------------------------------------------
 
-/// `ArcLend<Payload>`. Each reader handle is a stack of registered
+/// `Publisher<Payload>`. Each reader handle is a stack of registered
 /// `arc_lend::Reader`s, one per nesting level, made before the measured
 /// window; a block lends the reader of its level once and drops the loan
 /// within it. The publisher `publish`es, which frees whatever no reader
@@ -112,13 +112,13 @@ pub struct ArcLendCell;
 /// `RefCell` borrow, about a nanosecond) is inside the timed block; it is
 /// what `&mut` lending costs a harness whose `read` takes `&`.
 pub struct ArcLendReaders {
-    cell: Arc<ArcLend<Payload>>,
+    cell: Publisher<Payload>,
     levels: Vec<Padded<RefCell<arc_lend::Reader<Payload>>>>,
     depth: Cell<usize>,
 }
 
 impl ArcLendReaders {
-    fn new(cell: Arc<ArcLend<Payload>>) -> Self {
+    fn new(cell: Publisher<Payload>) -> Self {
         let levels = vec![Padded(RefCell::new(cell.reader()))];
         Self {
             cell,
@@ -130,12 +130,12 @@ impl ArcLendReaders {
 
 impl Contender for ArcLendCell {
     const NAME: &'static str = "arc-lend";
-    const CONFIG: &'static str = "ArcLend<T>; one registered Reader per thread and per nesting level, made before the measured window; lend() per block; no prewarm";
-    type Writer = Arc<ArcLend<Payload>>;
+    const CONFIG: &'static str = "Publisher<T>; one registered Reader per thread and per nesting level, made before the measured window; lend() per block; no prewarm";
+    type Writer = Publisher<Payload>;
     type Reader = ArcLendReaders;
 
     fn new(init: Payload) -> (Self::Writer, Self::Reader) {
-        let cell = Arc::new(ArcLend::new(init));
+        let cell = Publisher::new(init);
         (cell.clone(), ArcLendReaders::new(cell))
     }
     fn reader(r: &Self::Reader) -> Self::Reader {
@@ -935,7 +935,7 @@ impl ArcLendCell {
             seed += 1;
             Arc::new(Payload::new(seed))
         };
-        let cell = Arc::new(ArcLend::new(Payload::new(0)));
+        let cell = Publisher::new(Payload::new(0));
         let mut hist = arc_lend_compare::new_histogram();
         let mut readers: Vec<_> = (0..pinned).map(|_| cell.reader()).collect();
         let (retired_before, retired_at_release, release_ns);

@@ -1,5 +1,5 @@
 //! A fixed-rate simulation tick that reads the level it simulates through an
-//! `ArcLend`, while a loader thread swaps levels in.
+//! `Publisher`, while a loader thread swaps levels in.
 //!
 //! The tick must not stall on a lock, and must not pay for freeing a level it
 //! has just finished with: a large level's `Vec`s can take long enough to
@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use arc_lend::ArcLend;
+use arc_lend::Publisher;
 
 /// What the tick reads: built by the loader, never mutated after publishing.
 struct Level {
@@ -64,7 +64,7 @@ fn step(level: &Level, body: &mut Body, dt: f32) {
 }
 
 fn main() {
-    let level = Arc::new(ArcLend::new(Level::generate(0)));
+    let level = Publisher::new(Level::generate(0));
     let running = Arc::new(AtomicBool::new(true));
 
     // The tick thread: the one with a deadline.

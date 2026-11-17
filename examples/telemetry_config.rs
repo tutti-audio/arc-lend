@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use arc_lend::ArcLend;
+use arc_lend::Publisher;
 
 /// Which events to keep, per category: too big and too irregular for an
 /// atomic, and read far more often than it is written.
@@ -28,10 +28,10 @@ const CATEGORIES: [&str; 3] = ["http", "db", "cache"];
 const WORKERS: usize = 4;
 
 fn main() {
-    let config = Arc::new(ArcLend::new(Sampling {
+    let config = Publisher::new(Sampling {
         version: 0,
         keep_one_in: HashMap::from([("http", 1), ("db", 10)]),
-    }));
+    });
     let kept = Arc::new(AtomicU64::new(0));
 
     let workers: Vec<_> = (0..WORKERS)

@@ -1,27 +1,32 @@
-//! How to use [`ArcLend`](crate::ArcLend) well, and what to watch for.
+//! How to use [`Publisher`](crate::Publisher) and [`Reader`](crate::Reader) well, and what to watch for.
 //!
 //! # Using it well
 //!
-//! ## Store the reader, not the reader and the cell
+//! ## Keep the publisher apart from the readers
 //!
-//! A [`Reader`](crate::Reader) holds an `Arc` of its cell, and
-//! [`Reader::cell`](crate::Reader::cell) returns it. So a structure that
-//! reads a cell can keep the reader alone, and reach the cell through it to
-//! publish, to call [`current`](crate::ArcLend::current), or to register a
-//! reader for a copy of itself. Keeping both means two handles to keep in
-//! step.
+//! The two sides are two types. A [`Publisher`](crate::Publisher) is the
+//! writer's handle: it publishes, reclaims, reads the current value back and
+//! registers readers. A [`Reader`](crate::Reader) lends and does nothing else,
+//! and holds no way back to the publisher. So the structure the control side
+//! owns keeps the `Publisher`, and the structure that runs on the deadline
+//! keeps the `Reader`; the types stop the second from reaching what the
+//! first can.
 //!
 //! ```
-//! use std::sync::Arc;
-//! use arc_lend::{ArcLend, Reader};
+//! use arc_lend::{Publisher, Reader};
 //!
+//! struct VoiceControls {
+//!     window: Publisher<(f64, f64)>, // the control side's handle
+//! }
 //! struct Voice {
-//!     window: Reader<(f64, f64)>, // the only handle: the cell is behind it
+//!     window: Reader<(f64, f64)>, // the deadline's handle: it can only lend
 //! }
 //!
-//! let voice = Voice { window: Arc::new(ArcLend::new((0.0, 4.0))).reader() };
-//! voice.window.cell().publish((1.0, 4.0));
-//! assert_eq!(*voice.window.cell().current(), (1.0, 4.0));
+//! let controls = VoiceControls { window: Publisher::new((0.0, 4.0)) };
+//! let mut voice = Voice { window: controls.window.reader() };
+//! controls.window.publish((1.0, 4.0));
+//! assert_eq!(*controls.window.current(), (1.0, 4.0));
+//! assert_eq!(*voice.window.lend(), (1.0, 4.0));
 //! ```
 //!
 //! ## Lend once per iteration, and pass `&T` down
@@ -31,8 +36,7 @@
 //! before the loop waits for its next turn.
 //!
 //! ```
-//! use std::sync::Arc;
-//! use arc_lend::ArcLend;
+//! use arc_lend::Publisher;
 //!
 //! struct Coeffs { taps: Vec<f32> }
 //!
@@ -42,8 +46,8 @@
 //!     }
 //! }
 //!
-//! let cell = Arc::new(ArcLend::new(Coeffs { taps: vec![0.5] }));
-//! let mut reader = cell.reader(); // ahead of the loop
+//! let publisher = Publisher::new(Coeffs { taps: vec![0.5] });
+//! let mut reader = publisher.reader(); // ahead of the loop
 //! let (input, mut out) = ([1.0f32; 64], [0.0f32; 64]);
 //! for _iteration in 0..3 {
 //!     let coeffs = reader.lend(); // once, at the top
@@ -63,22 +67,23 @@
 //! do.
 //!
 //! ```
-//! use std::sync::Arc;
-//! use arc_lend::ArcLend;
+//! use arc_lend::Publisher;
 //!
-//! let table = Arc::new(ArcLend::new(vec![1.0f32, 2.0]));
+//! let table = Publisher::new(vec![1.0f32, 2.0]);
 //! let (mut outer, mut inner) = (table.reader(), table.reader());
 //! let a = outer.lend();
 //! let b = inner.lend(); // a second reader
 //! assert_eq!(a[0] + b[1], 3.0);
 //! ```
 //!
-//! ## Cloning a structure clones its readers
+//! ## A copy of a structure registers its own readers
 //!
-//! Cloning a `Reader` registers a new reader of the same cell, so a cloned
-//! structure gets readers of its own. Registering may allocate, so clone on
-//! the writer's side. To point a copy at a *different* cell, call
-//! [`reader`](crate::ArcLend::reader) on that cell instead.
+//! A `Reader` is not `Clone`: it owns one slot, and registering another is a
+//! writer-side act (it locks and may allocate). A structure that is copied
+//! keeps a [`Publisher`](crate::Publisher) on its control side (a clone of it
+//! is another handle on the same cell) and asks it for the copy's reader with
+//! [`reader`](crate::Publisher::reader). To point a copy at a *different*
+//! cell, ask that cell's publisher instead.
 //!
 //! ## Build the next value whole, on the writer's thread
 //!
@@ -90,15 +95,14 @@
 //! ## Derive the next value from the current one
 //!
 //! The writer reads back what it published with
-//! [`current`](crate::ArcLend::current), rather than keeping a copy beside
+//! [`current`](crate::Publisher::current), rather than keeping a copy beside
 //! the cell. The `Arc` it returns frees wherever it is dropped last, so it is
 //! for the writer only.
 //!
 //! ```
-//! use std::sync::Arc;
-//! use arc_lend::ArcLend;
+//! use arc_lend::Publisher;
 //!
-//! let gains = Arc::new(ArcLend::new(vec![1.0f32, 1.0]));
+//! let gains = Publisher::new(vec![1.0f32, 1.0]);
 //! // Halve every gain.
 //! let next: Vec<f32> = gains.current().iter().map(|g| g * 0.5).collect();
 //! gains.publish(next);
@@ -109,46 +113,45 @@
 //!
 //! An old value a reader was still using when it was replaced is freed by a
 //! later publish. A writer with nothing new to publish can call
-//! [`reclaim`](crate::ArcLend::reclaim) instead. When nothing is waiting it
+//! [`reclaim`](crate::Publisher::reclaim) instead. When nothing is waiting it
 //! is only a lock and a length check, so it is fine to call it on every tick
 //! of a loop the writer already runs, for every cell.
 //!
 //! ```
-//! use std::sync::Arc;
-//! use arc_lend::ArcLend;
+//! use arc_lend::Publisher;
 //!
-//! let cell = Arc::new(ArcLend::new(vec![0u8; 1 << 20]));
-//! let mut reader = cell.reader();
+//! let publisher = Publisher::new(vec![0u8; 1 << 20]);
+//! let mut reader = publisher.reader();
 //! let held = reader.lend();
-//! cell.publish(vec![1u8; 16]); // the big value is still on loan
+//! publisher.publish(vec![1u8; 16]); // the big value is still on loan
 //! drop(held);
-//! assert_eq!(cell.retired_len(), 1); // returned, but not yet freed
+//! assert_eq!(publisher.retired_len(), 1); // returned, but not yet freed
 //!
 //! // Later, on the writer's tick:
-//! assert_eq!(cell.reclaim(), 0); // the big one is freed here
+//! assert_eq!(publisher.reclaim(), 0); // the big one is freed here
 //! ```
 //!
 //! ## Decide your own policy for a backlog
 //!
 //! The cell never asserts, logs or panics when old values pile up. If you
-//! want to know, poll [`retired_len`](crate::ArcLend::retired_len), or the
-//! count [`reclaim`](crate::ArcLend::reclaim) returns, and decide: a debug
+//! want to know, poll [`retired_len`](crate::Publisher::retired_len), or the
+//! count [`reclaim`](crate::Publisher::reclaim) returns, and decide: a debug
 //! assertion, a metric, a log line. Loans keep at most one value per reader
 //! waiting, so a count well above the number of readers means a reader was
 //! paused mid-read (see below), or a loan is being kept too long.
 //!
 //! ```
-//! # use arc_lend::ArcLend;
-//! # let cell = ArcLend::new(0u32);
-//! # cell.publish(1);
+//! # use arc_lend::Publisher;
+//! # let publisher = Publisher::new(0u32);
+//! # publisher.publish(1);
 //! const LAGGING: usize = 1024; // your threshold, not the crate's
-//! let waiting = cell.reclaim();
+//! let waiting = publisher.reclaim();
 //! debug_assert!(waiting < LAGGING, "{waiting} old values still waiting");
 //! ```
 //!
 //! ## A value that may be absent
 //!
-//! Use `ArcLend<Option<Arc<U>>>`, or `ArcLend<Option<U>>` if `U` is small.
+//! Use `Publisher<Option<Arc<U>>>`, or `Publisher<Option<U>>` if `U` is small.
 //! Readers still only borrow: the inner `Arc` belongs to the published value,
 //! which only the writer frees.
 //!
@@ -192,11 +195,11 @@
 //!
 //! ## Destructors run on the writer
 //!
-//! Old values are dropped inside [`publish`](crate::ArcLend::publish) and
-//! [`reclaim`](crate::ArcLend::reclaim), after the cell's lock is released. A
+//! Old values are dropped inside [`publish`](crate::Publisher::publish) and
+//! [`reclaim`](crate::Publisher::reclaim), after the cell's lock is released. A
 //! slow destructor slows the writer; one that panics propagates out of the
 //! call and leaves the cell usable. The other place a value can be freed is
-//! the cell's own drop (see [`ArcLend`](crate::ArcLend), "Dropping the
+//! the cell's own drop (see [`Publisher`](crate::Publisher), "Dropping the
 //! cell").
 //!
 //! ## What a reader cannot do
@@ -208,5 +211,6 @@
 //!   is, so register it on one thread and move it to the one that reads.
 //! - **Share a reader.** `Reader` is not `Sync`, and has one live loan at a
 //!   time. Reading one cell at two levels takes two readers.
-//! - **Register, clone or publish on its deadline.** All three take the
-//!   cell's lock and may allocate. Publishing also frees.
+//! - **Register, publish or reclaim.** These are `Publisher` methods, which a
+//!   reader does not hold: they take the cell's lock and may allocate, and
+//!   publishing also frees.

@@ -56,10 +56,10 @@ mod contenders;
 
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{Barrier, Mutex};
 use std::time::{Duration, Instant};
 
-use arc_lend::{ArcLend, Reader};
+use arc_lend::{Publisher, Reader};
 use arc_lend_compare::{
     CountingAlloc, Counts, Histogram, Payload, Tail, begin_counting, end_counting, live_payloads,
     machine, new_histogram, ns,
@@ -1177,7 +1177,7 @@ enum Layout {
 /// for `run`, with no publisher. Returns the mean time per lend across the
 /// threads, in ns.
 fn concurrent_lends(threads: usize, layout: Layout, run: Duration, cores: &Cores) -> f64 {
-    let cell = Arc::new(ArcLend::new(Payload::new(0)));
+    let cell = Publisher::new(Payload::new(0));
     let mut adjacent: Vec<ArcLendReader> = Vec::new();
     let mut apart: Vec<Apart<ArcLendReader>> = Vec::new();
     let refs: Vec<&mut ArcLendReader> = match layout {

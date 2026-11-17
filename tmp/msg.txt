@@ -1,0 +1,6 @@
+Split the writer side from the reader side: Publisher and Reader (0.2.0)
+
+ArcLend<T> is replaced by Publisher<T>, which holds publish, reclaim,
+current, retired_len and reader. Reader<T> keeps lend only: Reader::cell
+and Clone for Reader are removed. Version 0.2.0; CHANGELOG lists the
+breaking changes and their migrations.

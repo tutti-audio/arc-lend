@@ -29,7 +29,7 @@ fn readers_against_a_publisher(readers: usize, publishes: usize, nest: bool) {
         v: vec![g; LEN],
         sites: sites.clone(),
     };
-    let cell = Arc::new(ArcLend::new(make(0)));
+    let cell = Publisher::new(make(0));
     let done = Arc::new(StdAtomicBool::new(false));
 
     let handles: Vec<_> = (0..readers)
@@ -67,7 +67,7 @@ fn readers_against_a_publisher(readers: usize, publishes: usize, nest: bool) {
     done.store(true, StdOrdering::Relaxed);
     let reader_threads: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
-    drop(Arc::into_inner(cell).expect("readers are joined and dropped"));
+    drop(cell);
     let sites = sites.lock().unwrap();
     let mut ids: Vec<_> = sites.iter().map(|&(g, _)| g).collect();
     ids.sort_unstable();

@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use crate::cell::Control;
+use crate::shared::Control;
 use crate::slots::Padded;
 use crate::sync::{AtomicPtr, Ordering};
 
@@ -59,7 +59,7 @@ impl<T> Current<T> {
     pub(crate) fn load(&self) -> NonNull<T> {
         let ptr = self.ptr.0.load(Ordering::Acquire);
         // Only ever set from `Arc::into_raw`, never null.
-        NonNull::new(ptr).expect("ArcLend::current is never null")
+        NonNull::new(ptr).expect("Publisher::current is never null")
     }
 
     /// Swaps `value` in, and returns the outgoing value for the caller to
