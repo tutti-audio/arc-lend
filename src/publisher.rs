@@ -23,10 +23,10 @@ use crate::shared::Shared;
 ///
 /// Everything that locks, allocates or frees is a method of the `Publisher`:
 /// [`publish`](Self::publish), [`reclaim`](Self::reclaim),
-/// [`current`](Self::current), [`retired_len`](Self::retired_len) and
-/// [`reader`](Self::reader). A [`Reader`] has [`lend`](Reader::lend) and
-/// nothing else, and holds no `Publisher`, so the thread that reads cannot
-/// reach a writer-side call.
+/// [`current`](Self::current), [`seq`](Self::seq),
+/// [`retired_len`](Self::retired_len) and [`reader`](Self::reader). A
+/// [`Reader`] has [`lend`](Reader::lend) and nothing else, and holds no
+/// `Publisher`, so the thread that reads cannot reach a writer-side call.
 ///
 /// # Cloning
 ///
@@ -153,7 +153,7 @@ impl<T> Publisher<T> {
             // outgoing value. The push cannot allocate (reserved above).
             let old_seq = control.seq;
             control.seq += 1;
-            let old = self.cell.current.swap(value);
+            let old = self.cell.current.swap(value, control.seq);
             control.retired.push((old, old_seq));
 
             control.scan(&mut freeable);
@@ -174,6 +174,31 @@ impl<T> Publisher<T> {
     #[must_use]
     pub fn current(&self) -> Arc<T> {
         self.cell.current.to_arc(&self.cell.lock())
+    }
+
+    /// Returns the publish number of the current value.
+    ///
+    /// The value given to [`new`](Self::new) or [`from_arc`](Self::from_arc)
+    /// is number 0, and each [`publish`](Self::publish) makes the next
+    /// number. It takes the cell's lock, so it is exact: a [`Loan`](crate::Loan)
+    /// taken afterwards reports this number or a later one
+    /// ([`Loan::seq`](crate::Loan::seq)). On a target without 64-bit atomics
+    /// a loan's number is truncated to `usize::BITS` bits and this one is not,
+    /// so they agree only until the count passes 2^`usize::BITS`.
+    ///
+    /// ```
+    /// use arc_lend::Publisher;
+    ///
+    /// let publisher = Publisher::new("a");
+    /// assert_eq!(publisher.seq(), 0);
+    /// publisher.publish("b");
+    /// assert_eq!(publisher.seq(), 1);
+    /// let mut reader = publisher.reader();
+    /// assert_eq!(reader.lend().seq(), 1);
+    /// ```
+    #[must_use]
+    pub fn seq(&self) -> u64 {
+        self.cell.lock().seq
     }
 
     /// Frees old values no reader is still using, without publishing.

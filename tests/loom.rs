@@ -46,7 +46,7 @@
 
 #![cfg(loom)]
 
-use arc_lend::Publisher;
+use arc_lend::{Publisher, Reader};
 use loom::cell::UnsafeCell;
 use loom::sync::Mutex;
 use loom::sync::atomic::{AtomicBool, Ordering};
@@ -412,5 +412,152 @@ fn registering_and_dropping_readers() {
 
         let readers = [a.join().unwrap(), b.join().unwrap()];
         finish(cell, &tracker, &readers);
+    });
+}
+
+/// What every seq model asserts of one lend, on a cell whose value `n` is
+/// published as number `n` (`Tracked::id`): the value is alive and whole, its
+/// number is at least the loan's (`Loan::seq` is never newer than the value),
+/// and neither goes down from the reader's previous lend. Returns the
+/// reader's new `(seq, id)`.
+fn lend_and_check_seq(reader: &mut Reader<Tracked>, last: (u64, usize)) -> (u64, usize) {
+    let loan = reader.lend();
+    loan.check();
+    let (seq, id) = (loan.seq(), loan.id);
+    assert!(
+        id as u64 >= seq,
+        "loan reports seq {seq}, newer than its value {id}"
+    );
+    assert!(seq >= last.0, "seq went back: {seq} after {}", last.0);
+    assert!(id >= last.1, "value went back: {id} after {}", last.1);
+    (seq, id)
+}
+
+/// After every publish has finished (the publisher is the caller, so its
+/// writes are ordered before this lend), a lend reports the final number with
+/// the final value: a reader that compares numbers never misses the last
+/// change.
+fn assert_final_lend(reader: &mut Reader<Tracked>, last: (u64, usize), published: u64) {
+    let loan = reader.lend();
+    loan.check();
+    assert_eq!(
+        loan.seq(),
+        published,
+        "the final lend reports the final seq"
+    );
+    assert_eq!(loan.id as u64, published, "and the final value");
+    assert!(loan.seq() >= last.0 && loan.id >= last.1);
+}
+
+/// `Loan::seq` against two back-to-back publishes: a reader that lends twice
+/// while the writer publishes values 1 and 2 (each as its own number) never
+/// sees a number newer than its value, and its numbers and values never go
+/// down. Every lend also does the free-safety checks of the models above, so
+/// the load of the number cannot have weakened them. After the publishes, one
+/// more lend reports the final pair.
+#[test]
+fn seq_is_never_newer_than_the_value() {
+    model(|| {
+        let tracker = Tracker::new(3);
+        let cell = cell(&tracker);
+        let mut r = cell.reader();
+        let reader = thread::spawn(move || {
+            let first = lend_and_check_seq(&mut r, (0, 0));
+            let second = lend_and_check_seq(&mut r, first);
+            (r, second, thread::current().id())
+        });
+
+        cell.publish(tracker.make(1));
+        cell.publish(tracker.make(2));
+
+        let (mut r, last, reader) = reader.join().unwrap();
+        assert_final_lend(&mut r, last, 2);
+        drop(r);
+        finish(cell, &tracker, &[reader]);
+    });
+}
+
+/// Two readers on two slots against one publish: each reader's numbers obey
+/// the contract on its own, and the writer scans both slots.
+#[test]
+fn seq_with_two_readers() {
+    model(|| {
+        let tracker = Tracker::new(2);
+        let cell = cell(&tracker);
+        let readers: Vec<_> = (0..2)
+            .map(|_| {
+                let mut r = cell.reader();
+                thread::spawn(move || {
+                    let last = lend_and_check_seq(&mut r, (0, 0));
+                    (r, last, thread::current().id())
+                })
+            })
+            .collect();
+
+        cell.publish(tracker.make(1));
+
+        let mut ids = Vec::new();
+        let mut handed_back = Vec::new();
+        for reader in readers {
+            let (mut r, last, id) = reader.join().unwrap();
+            assert_final_lend(&mut r, last, 1);
+            ids.push(id);
+            handed_back.push(r);
+        }
+        drop(handed_back);
+        finish(cell, &tracker, &ids);
+    });
+}
+
+/// A reclaim between two publishes, and another after them, while a reader
+/// lends twice: the scans' fences and the reader's loads of the number and
+/// the pointer race, and the free-safety invariants hold on every lend along
+/// with the contract on the numbers.
+#[test]
+fn seq_racing_reclaim() {
+    model(|| {
+        let tracker = Tracker::new(3);
+        let cell = cell(&tracker);
+        let mut r = cell.reader();
+        let reader = thread::spawn(move || {
+            let first = lend_and_check_seq(&mut r, (0, 0));
+            let second = lend_and_check_seq(&mut r, first);
+            (r, second, thread::current().id())
+        });
+
+        cell.publish(tracker.make(1));
+        cell.reclaim();
+        cell.publish(tracker.make(2));
+        cell.reclaim();
+
+        let (mut r, last, reader) = reader.join().unwrap();
+        assert_final_lend(&mut r, last, 2);
+        drop(r);
+        finish(cell, &tracker, &[reader]);
+    });
+}
+
+/// `Publisher::seq` on the writer's thread is the number of the value it
+/// just published, while a reader on another thread lends: its loan is never
+/// newer than its value.
+#[test]
+fn publisher_seq_counts_while_a_reader_lends() {
+    model(|| {
+        let tracker = Tracker::new(3);
+        let cell = cell(&tracker);
+        assert_eq!(cell.seq(), 0);
+        let mut r = cell.reader();
+        let reader = thread::spawn(move || {
+            lend_and_check_seq(&mut r, (0, 0));
+            thread::current().id()
+        });
+
+        cell.publish(tracker.make(1));
+        assert_eq!(cell.seq(), 1);
+        cell.publish(tracker.make(2));
+        assert_eq!(cell.seq(), 2);
+
+        let reader = reader.join().unwrap();
+        finish(cell, &tracker, &[reader]);
     });
 }

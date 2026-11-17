@@ -30,12 +30,16 @@ fn the_reader_side_neither_allocates_nor_frees() {
     // later blocks run too.
     let mut readers: Vec<_> = (0..40).map(|_| cell.reader()).collect();
     let mut sum = 0;
+    let mut seqs = 0;
     assert_no_alloc::assert_no_alloc(|| {
         for reader in &mut readers {
-            sum += reader.lend()[0];
+            let loan = reader.lend();
+            sum += loan[0];
+            seqs += loan.seq();
         }
     });
     assert_eq!(sum, 40);
+    assert_eq!(seqs, 0, "the first value is number 0");
 
     // Every reader parks a loan of the first value, which is then retired.
     // `publish` allocates the new value and may grow the retirement list;
@@ -47,15 +51,20 @@ fn the_reader_side_neither_allocates_nor_frees() {
 
     let mut fresh = cell.reader();
     let mut fresh_value = 0;
+    let mut fresh_seq = 0;
     assert_no_alloc::assert_no_alloc(|| {
         // A fresh lend sees the new value, and dropping every loan of the
         // retired one, then every reader, frees nothing.
-        fresh_value = fresh.lend()[0];
+        let loan = fresh.lend();
+        fresh_value = loan[0];
+        fresh_seq = loan.seq();
+        drop(loan);
         while let Some(loan) = held.pop() {
             drop(loan);
         }
     });
     assert_eq!(fresh_value, 2);
+    assert_eq!(fresh_seq, 1, "one publish");
     // The emptied `Vec`'s buffer is the test's, not the cell's: freed here.
     drop(held);
     assert_no_alloc::assert_no_alloc(|| {

@@ -7,6 +7,22 @@ release may break the API.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-17
+
+### Added
+
+- `Loan::seq` and `Publisher::seq`: the publish number. The value given to
+  `Publisher::new` or `Publisher::from_arc` is number 0, and each publish makes
+  the next. A loan reports the number of the lent value or of an earlier one,
+  never a later one, so a reader that remembers the last number it saw and
+  compares it on each lend gets a false "changed" at most and never misses a
+  change: once the last publish happens-before a lend (a join, or a flag read
+  with `Acquire`), that lend reports the final number with the final value. The number is read in `lend` with one more `Acquire` load,
+  from the line the pointer is on, after the claim's fence; the claim,
+  announce and scan protocol is unchanged (`docs::design`, §5.2). On a target
+  without 64-bit atomics the number is kept in a `usize` and wraps at 2^`usize::BITS`, so the guarantees hold
+  there between wraps.
+
 ## [0.2.0] - 2026-11-17
 
 The writer's side and the reader's side are now two types. In 0.1 a cell was
@@ -71,6 +87,7 @@ reader that outlives every `Publisher` frees the cell where it drops.
 The first release, moved out of the
 [tutti](https://github.com/tutti-audio/tutti) repository with its history.
 
-[Unreleased]: https://github.com/tutti-audio/arc-lend/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tutti-audio/arc-lend/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tutti-audio/arc-lend/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tutti-audio/arc-lend/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tutti-audio/arc-lend/releases/tag/v0.1.0
