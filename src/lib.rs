@@ -1,10 +1,10 @@
 #![doc = include_str!("../README.md")]
 //! Sharing an [`Arc`] with threads that must never free.
 //!
-//! The [`ArcLend`] type holds an `Arc` that one thread can replace while others
-//! read it. In that respect it is similar to [`ArcSwap`], or to
-//! `RwLock<Arc<T>>` without the lock. The difference is in who lets go of the
-//! old value: with `ArcLend` it is always the writer, never a reader. It is
+//! A [`Publisher`] holds an `Arc` that one thread can replace while others
+//! read it through [`Reader`]s. In that respect it is similar to [`ArcSwap`],
+//! or to `RwLock<Arc<T>>` without the lock. The difference is in who lets go
+//! of the old value: here it is always the writer, never a reader. It is
 //! meant for threads that run against a deadline, such as an audio callback, a
 //! game's fixed tick or a control loop.
 //!
@@ -27,7 +27,7 @@
 //! ## The idea: lend, don't share
 //!
 //! With an `Arc`, every reader is a co-owner, and whichever owner is last
-//! cleans up. `ArcLend` keeps a single owner, the cell itself, and *lends* the
+//! cleans up. Here a single owner, the cell itself, *lends* the
 //! value to readers instead. A reader marks what it has borrowed while it reads,
 //! and clears the mark when it is done. Before freeing an old value, the writer
 //! checks the marks. Anything still on loan is kept and freed on a later pass.
@@ -39,25 +39,26 @@
 //!
 //! ## Using it
 //!
-//! 1. Wrap the value in an `ArcLend`, and share the cell through an `Arc`.
-//! 2. Before each reading thread starts, register a [`Reader`] for it. This
-//!    is the one step that may allocate, so it belongs off the deadline.
+//! 1. Wrap the value in a [`Publisher`], which the writing side keeps.
+//! 2. Before each reading thread starts, register a [`Reader`] for it with
+//!    [`reader`]. This is the one step that may allocate, so it belongs off
+//!    the deadline.
 //! 3. On the reading thread, call [`lend`] once per iteration. The [`Loan`]
-//!    it returns derefs to the value, and dropping it never frees.
+//!    it returns derefs to the value, and dropping it never frees. A reader
+//!    can do nothing else: it holds no way to publish or reclaim.
 //! 4. On the writing thread, [`publish`] each new version. Old versions are
 //!    freed there, once no reader still has them.
 //!
 //! ```rust
-//! use std::sync::Arc;
-//! use arc_lend::ArcLend;
+//! use arc_lend::Publisher;
 //!
 //! struct Settings { gains: Vec<f32> }
 //!
-//! // 1. The cell, shared through an `Arc`.
-//! let cell = Arc::new(ArcLend::new(Settings { gains: vec![1.0; 4] }));
+//! // 1. The cell, and the writer's handle to it.
+//! let publisher = Publisher::new(Settings { gains: vec![1.0; 4] });
 //!
 //! // 2. Register the reader on the writer's side, then move it to its thread.
-//! let mut reader = cell.reader();
+//! let mut reader = publisher.reader();
 //! let reader_thread = std::thread::spawn(move || {
 //!     for _iteration in 0..1000 {
 //!         // 3. One lend per iteration: wait-free, allocation-free, free-free.
@@ -68,13 +69,14 @@
 //!
 //! // 4. The writer publishes new versions, and frees old ones here.
 //! for n in 1..100 {
-//!     cell.publish(Settings { gains: vec![0.5; 4 + n % 3] });
+//!     publisher.publish(Settings { gains: vec![0.5; 4 + n % 3] });
 //! }
 //! reader_thread.join().unwrap();
 //! ```
 //!
 //! The writer can also read the value back with [`current`], which is handy
-//! for deriving the next version from the last.
+//! for deriving the next version from the last. Several control-side owners
+//! can share one cell by cloning the `Publisher`.
 //!
 //! ## Is it the right fit?
 //!
@@ -82,7 +84,7 @@
 //! the more general tool: any thread can read without registering first, a
 //! reader can keep what it reads as its own `Arc`, and it offers more ways to
 //! update.
-//! `ArcLend` gives those up so that its reads can be free-free, and earns its
+//! This crate gives those up so that its reads can be free-free, and earns its
 //! keep when a stray free on the reading thread would actually hurt.
 //!
 //! It also asks a little of you: a loan should last one iteration, not be kept
@@ -98,26 +100,28 @@
 //!
 //! [`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
 //! [`ArcSwap`]: https://docs.rs/arc-swap
-//! [`ArcLend`]: crate::ArcLend
+//! [`Publisher`]: crate::Publisher
 //! [`Reader`]: crate::Reader
 //! [`Loan`]: crate::Loan
-//! [`publish`]: crate::ArcLend::publish
-//! [`current`]: crate::ArcLend::current
+//! [`reader`]: crate::Publisher::reader
+//! [`publish`]: crate::Publisher::publish
+//! [`current`]: crate::Publisher::current
 //! [`lend`]: crate::Reader::lend
 //! [guide]: crate::docs::guide
 //! [benchmarks]: https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md
 //! [design]: crate::docs::design
 #![deny(clippy::undocumented_unsafe_blocks, clippy::missing_safety_doc)]
 
-mod cell;
 mod current;
+mod publisher;
 mod reader;
+mod shared;
 mod slots;
 mod sync;
 
 pub mod docs;
 
-pub use cell::ArcLend;
+pub use publisher::Publisher;
 pub use reader::{Loan, Reader};
 
 // Under `--cfg loom` the atomics are loom's, which panic outside a

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::slots::FREE;
 use crate::sync::Ordering;
-use crate::{ArcLend, Loan, Reader};
+use crate::{Loan, Publisher, Reader};
 
 use std::sync::atomic::{AtomicBool as StdAtomicBool, Ordering as StdOrdering};
 use std::sync::mpsc;
@@ -62,7 +62,12 @@ fn finish<T>(reader: &Reader<T>) {
     reader.slot().word.store(FREE, Ordering::Release);
 }
 
-impl<T> ArcLend<T> {
+impl<T> Publisher<T> {
+    /// Locks the writer's state, for a test that reads it.
+    fn lock(&self) -> std::sync::MutexGuard<'_, crate::shared::Control<T>> {
+        self.cell.lock()
+    }
+
     /// How many slots the slot list has: the high-water mark of readers
     /// registered at once, rounded up to a block.
     fn slot_count(&self) -> usize {

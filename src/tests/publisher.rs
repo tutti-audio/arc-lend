@@ -20,13 +20,13 @@ fn a_panicking_destructor_does_not_poison_the_cell() {
         }
     }
 
-    let cell = Arc::new(ArcLend::new(Bomb(true)));
+    let cell = Publisher::new(Bomb(true));
     let mut reader = cell.reader();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         cell.publish(Arc::new(Bomb(false)));
     }));
     assert!(result.is_err(), "the retired value's drop panicked");
-    assert!(!cell.control.is_poisoned());
+    assert!(!cell.cell.control.is_poisoned());
     assert_eq!(cell.retired_len(), 0, "it left the list before it ran");
 
     cell.publish(Arc::new(Bomb(false)));
@@ -39,7 +39,7 @@ fn a_panicking_destructor_does_not_poison_the_cell() {
 /// allocating one per publish.
 #[test]
 fn a_publish_hands_its_buffer_to_the_next() {
-    let cell = Arc::new(ArcLend::new(0u32));
+    let cell = Publisher::new(0u32);
     cell.publish(Arc::new(1));
     let first = cell.lock().spare.as_ptr();
     assert!(
@@ -61,29 +61,29 @@ fn a_publish_hands_its_buffer_to_the_next() {
 #[cfg_attr(miri, ignore = "waits on a wall-clock deadline")]
 fn debug_formats_outside_the_lock() {
     struct Reentrant {
-        cell: std::sync::OnceLock<std::sync::Weak<ArcLend<Reentrant>>>,
+        cell: Arc<std::sync::Mutex<Option<Publisher<Reentrant>>>>,
     }
     impl std::fmt::Debug for Reentrant {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            if let Some(cell) = self.cell.get().and_then(std::sync::Weak::upgrade) {
+            if let Some(cell) = self.cell.lock().unwrap().clone() {
                 cell.publish(Arc::new(Reentrant {
-                    cell: std::sync::OnceLock::new(),
+                    cell: Arc::default(),
                 }));
             }
             f.write_str("Reentrant")
         }
     }
 
+    let link = Arc::default();
     let first = Arc::new(Reentrant {
-        cell: std::sync::OnceLock::new(),
+        cell: Arc::clone(&link),
     });
-    let cell = Arc::new(ArcLend::from_arc(Arc::clone(&first)));
-    first.cell.set(Arc::downgrade(&cell)).expect("set once");
-    drop(first);
+    let cell = Publisher::from_arc(first);
+    *link.lock().unwrap() = Some(cell.clone());
 
     let (done_tx, done_rx) = mpsc::channel();
     let formatter = {
-        let cell = Arc::clone(&cell);
+        let cell = cell.clone();
         std::thread::spawn(move || {
             let text = format!("{cell:?}");
             done_tx.send(text).unwrap();
@@ -93,8 +93,10 @@ fn debug_formats_outside_the_lock() {
         .recv_timeout(Duration::from_secs(10))
         .expect("Debug deadlocked on a payload that publishes");
     formatter.join().unwrap();
-    assert_eq!(text, "ArcLend(Reentrant)");
+    assert_eq!(text, "Publisher(Reentrant)");
     assert_eq!(cell.retired_len(), 0, "the formatted value was freed after");
+    // Breaks the cycle the payload made through the publisher.
+    link.lock().unwrap().take();
 }
 
 /// `current` is the value published last, as the same allocation the
@@ -102,7 +104,7 @@ fn debug_formats_outside_the_lock() {
 #[test]
 fn current_is_the_value_published_last() {
     let first = Arc::new(1u32);
-    let cell = Arc::new(ArcLend::from_arc(Arc::clone(&first)));
+    let cell = Publisher::from_arc(Arc::clone(&first));
     assert!(Arc::ptr_eq(&cell.current(), &first));
 
     let second = Arc::new(2u32);
@@ -122,7 +124,7 @@ fn current_is_the_value_published_last() {
 #[test]
 fn a_snapshot_owns_its_value_and_frees_where_it_drops() {
     let (sites, make) = sites();
-    let cell = Arc::new(ArcLend::from_arc(make(0)));
+    let cell = Publisher::from_arc(make(0));
 
     let snapshot = cell.current();
     cell.publish(make(1));
@@ -137,4 +139,33 @@ fn a_snapshot_owns_its_value_and_frees_where_it_drops() {
     .join()
     .unwrap();
     assert_eq!(*sites.lock().unwrap(), vec![(0, there)]);
+}
+
+/// A clone of a publisher is another handle on the one cell: what either
+/// publishes, both read back, and a reader registered through either lends
+/// it. The cell is freed when the last of them goes.
+#[test]
+fn a_cloned_publisher_is_the_same_cell() {
+    let (sites, make) = sites();
+    let first = Publisher::from_arc(make(0));
+    let second = first.clone();
+    let mut reader = second.reader();
+
+    first.publish(make(1));
+    assert_eq!(second.current().id, 1);
+    second.publish(make(2));
+    assert_eq!(first.current().id, 2);
+    assert_eq!(reader.lend().id, 2);
+    assert_eq!(first.retired_len(), 0, "one cell, one retired list");
+    assert_eq!(freed(&sites), vec![0, 1]);
+
+    drop(first);
+    assert!(!freed(&sites).contains(&2), "a handle is still alive");
+    drop(second);
+    assert!(
+        !freed(&sites).contains(&2),
+        "the reader still holds the cell"
+    );
+    drop(reader);
+    assert_eq!(freed(&sites), vec![0, 1, 2]);
 }

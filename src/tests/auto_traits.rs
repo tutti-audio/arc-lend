@@ -58,13 +58,13 @@ fn a_reader_is_send_but_not_sync() {
     }
 }
 
-/// The cell itself must stay shareable: every reader holds an
-/// `Arc<ArcLend<_>>` across threads. The raw pointer inside would make it
+/// The publisher must stay shareable, and with it the cell: every reader
+/// holds a share of the cell across threads. The raw pointer inside would make it
 /// neither `Send` nor `Sync` by default; `PhantomData<Arc<T>>` plus the
 /// atomics is what gives it `Arc<T>`'s auto traits back without an
 /// `unsafe impl`.
 #[test]
 fn the_cell_is_send_and_sync_for_send_sync_payloads() {
     fn assert_send_sync<X: Send + Sync>() {}
-    assert_send_sync::<ArcLend<Vec<u32>>>();
+    assert_send_sync::<Publisher<Vec<u32>>>();
 }

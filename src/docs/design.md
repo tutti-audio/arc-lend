@@ -25,12 +25,14 @@ the writer waits for its readers, drops are routed to a collector thread, or
 users follow a discipline that keeps the last count off the reader. We
 wanted a cell whose reads *cannot* free, as a property of the types, and
 whose writer never waits on a reader. A read is a lend and the loan it
-returns: neither holds an owning handle. The reader's other handles to the
-cell, [`Reader::cell`] and dropping the `Reader` itself, are ordinary
-`Arc` operations, and belong on the writer's side of the program.
+returns: neither holds an owning handle. The writer's operations belong to
+a different type, [`Publisher`], which a [`Reader`] does not hold and cannot
+reach. The one `Arc` operation left on the reader's side is dropping the
+`Reader` itself, which releases its share of the cell.
 
 [BENCHMARKS.md]: https://github.com/tutti-audio/arc-lend/blob/main/BENCHMARKS.md
-[`Reader::cell`]: crate::Reader::cell
+[`Publisher`]: crate::Publisher
+[`Reader`]: crate::Reader
 
 ## 2. Overview
 
@@ -358,14 +360,14 @@ policy to the host.
 
 | Operation | Thread | What it does |
 |---|---|---|
-| `ArcLend::reader`, `Reader::clone` | control | the mutex; a walk for an unowned slot from where the last registration stopped; when every slot is owned, a new block that doubles the list (an allocation) |
+| `Publisher::reader` | control | the mutex; a walk for an unowned slot from where the last registration stopped; when every slot is owned, a new block that doubles the list (an allocation) |
 | `Reader::lend` | reader | a `Release` store, a `SeqCst` fence, an `Acquire` load and a `Relaxed` store, all on the reader's own cache line except the load |
 | drop a `Loan` | reader | one `Release` store |
-| drop a `Reader` | any | one `Release` store, and its `Arc` of the cell |
-| `ArcLend::publish` | publisher | the mutex; a swap and a `SeqCst` fence; one `Acquire` load per slot; a sort of the announced addresses; one pass over the retired list; the frees, after the lock. It allocates only when the retired list grows or the reused free buffer is too small |
-| `ArcLend::reclaim` | publisher | a publish without the swap, or the mutex alone when nothing is retired |
-| `ArcLend::current` | publisher | the mutex and a strong-count increment |
-| `ArcLend::retired_len` | publisher | the mutex |
+| drop a `Reader` | any | one `Release` store, and its share of the cell |
+| `Publisher::publish` | publisher | the mutex; a swap and a `SeqCst` fence; one `Acquire` load per slot; a sort of the announced addresses; one pass over the retired list; the frees, after the lock. It allocates only when the retired list grows or the reused free buffer is too small |
+| `Publisher::reclaim` | publisher | a publish without the swap, or the mutex alone when nothing is retired |
+| `Publisher::current` | publisher | the mutex and a strong-count increment |
+| `Publisher::retired_len` | publisher | the mutex |
 
 Memory is the pointer and one cache line per slot (128 bytes on x86-64 and
 aarch64, 64 elsewhere), kept at the high-water mark of readers rounded up

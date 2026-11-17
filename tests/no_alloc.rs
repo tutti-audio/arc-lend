@@ -10,7 +10,7 @@ use assert_no_alloc::AllocDisabler;
 #[global_allocator]
 static A: AllocDisabler = AllocDisabler;
 
-/// The whole reader side of `ArcLend` (lends through many registered
+/// The whole reader side of the cell (lends through many registered
 /// readers, dropping a loan of a value that has since been retired, and
 /// dropping the readers themselves) neither allocates nor frees.
 ///
@@ -22,10 +22,10 @@ static A: AllocDisabler = AllocDisabler;
 /// `tests/loom.rs`, not this test's.
 #[test]
 fn the_reader_side_neither_allocates_nor_frees() {
-    use arc_lend::ArcLend;
+    use arc_lend::Publisher;
     use std::sync::Arc;
 
-    let cell = Arc::new(ArcLend::new(vec![1u32; 64]));
+    let cell = Publisher::new(vec![1u32; 64]);
     // Readers across six blocks of the slot list, so lends through slots of
     // later blocks run too.
     let mut readers: Vec<_> = (0..40).map(|_| cell.reader()).collect();
@@ -59,7 +59,7 @@ fn the_reader_side_neither_allocates_nor_frees() {
     // The emptied `Vec`'s buffer is the test's, not the cell's: freed here.
     drop(held);
     assert_no_alloc::assert_no_alloc(|| {
-        // Dropping a reader drops its `Arc` of the cell, which is not the
+        // Dropping a reader drops its share of the cell, which is not the
         // last (`cell` is), so this is one store and a decrement each.
         while let Some(reader) = readers.pop() {
             drop(reader);

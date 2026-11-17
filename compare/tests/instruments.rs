@@ -127,7 +127,7 @@ fn a_promoted_arc_swap_guard_frees_on_the_reader() {
 fn an_arc_lend_loan_frees_nothing_on_the_reader() {
     const HELD: u8 = 1;
     const STORED: u8 = 2;
-    let cell = Arc::new(arc_lend::ArcLend::new(Payload::new(0)));
+    let cell = arc_lend::Publisher::new(Payload::new(0));
     let step = Arc::new(Step::default());
     let reader = {
         // Registered here, on the control side, and moved to the reader.
