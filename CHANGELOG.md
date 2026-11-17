@@ -7,7 +7,7 @@ release may break the API.
 
 ## [Unreleased]
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-11-17
 
 The writer's side and the reader's side are now two types. In 0.1 a cell was
 shared as `Arc<ArcLend<T>>`, so any holder could publish, reclaim, read the
