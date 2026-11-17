@@ -57,10 +57,14 @@ a public type, so there is nothing to wrap in an `Arc`.
   `Publisher` clone privately and registers through it in its own `Clone`.
 
 The protocol is unchanged: the slot layout, the fence pair, the freeing rules
-and the loom model are the 0.1 ones, and a reader still never frees a value.
+and the loom model are the 0.1 ones, and a reader never frees a published value.
 The one free that can still land on a reading thread is the cell's own, when
 the last handle to it is a `Reader`; keep a `Publisher` for as long as readers
 exist.
+
+Handle order, when migrating: keep a `Publisher` alive for as long as any
+reader on a deadline thread, or drop those readers off that thread first. A
+reader that outlives every `Publisher` frees the cell where it drops.
 
 ## [0.1.0] - 2026-11-14
 

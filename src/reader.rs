@@ -1,5 +1,6 @@
 //! [`Reader`] and [`Loan`]: everything that runs on a reader's thread.
-//! Nothing here frees, allocates or waits.
+//! A lend and its loan never free, allocate or wait. A reader's drop frees
+//! the cell only if it is the last handle to it.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
