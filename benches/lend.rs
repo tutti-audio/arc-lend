@@ -25,6 +25,14 @@ fn uncontended(c: &mut Criterion) {
     let cell = Publisher::new([7u64; 8]);
     let mut reader = cell.reader();
     g.bench_function("arc_lend", |b| b.iter(|| black_box(reader.lend()[3])));
+    // The same lend, and the publish number it reports folded into the result
+    // (an unused number is a dead load the compiler may drop).
+    g.bench_function("arc_lend_seq", |b| {
+        b.iter(|| {
+            let loan = reader.lend();
+            black_box(loan[3].wrapping_add(loan.seq()))
+        })
+    });
     let swap = ArcSwap::from_pointee([7u64; 8]);
     g.bench_function("arc_swap_load", |b| b.iter(|| black_box(swap.load()[3])));
     g.finish();

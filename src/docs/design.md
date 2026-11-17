@@ -67,7 +67,11 @@ it is enough.
 - **`owned`**: a flag beside each slot's word, true while a live reader
   owns the slot.
 - **`seq`**: a counter of publishes. A value's *sequence number* is what
-  `seq` was while the value was current.
+  `seq` was while the value was current: 0 for the first value, then 1, 2,
+  and so on. (Not the *generation* each reader keeps of its own lends, §5.1.)
+- **`published_seq`**: an atomic copy of `seq`, on the line of `current`,
+  that a lend reads (§5.2). The publisher writes it after its swap, under
+  the mutex.
 - **Retired list**: the values swapped out and not yet freed, each with its
   sequence number. To *retire* a value is to move it here.
 - **`scanned_at`**: what `seq` was at the last scan.
@@ -140,9 +144,10 @@ fn lend(&mut self) -> Loan {
     self.slot.generation += 1; // on the slot, so a lend writes only the slot
     self.slot.word.store(claim(self.slot.generation), Release);
     fence(SeqCst);
+    let seq = published_seq.load(Acquire);
     let value = current.load(Acquire);
     self.slot.word.store(announcement(value), Relaxed);
-    Loan { slot: &self.slot, value }
+    Loan { slot: &self.slot, value, seq }
 }
 
 fn drop(loan: &mut Loan) {
@@ -151,10 +156,11 @@ fn drop(loan: &mut Loan) {
 ```
 
 The reader side is three stores to a line no other reader touches, one
-fence and one load. It takes no lock, touches no reference count, never
+fence and two loads, both from the line `current` is on. It takes no lock, touches no reference count, never
 loops or retries, and never frees. So a lend is wait-free and does not
 allocate. The `Acquire` load pairs with the publisher's `Release` swap, so
-the reader sees the value fully built. We made the announcement `Relaxed`
+the reader sees the value fully built. The load of `published_seq` before it
+is what `Loan::seq` reports (§5.2). We made the announcement `Relaxed`
 because the publisher only compares the address, and the fence before it
 already orders the reader's earlier accesses (§5, case (b)).
 
@@ -169,6 +175,7 @@ fn publish(&mut self, value: Arc<T>) {
     let old = self.current.swap(value, Release);
     self.retired.push((old, self.seq));
     self.seq += 1;
+    published_seq.store(self.seq, Release);
     self.scan(&mut freeable);
     // After unlocking: drop `freeable`, and keep its buffer for next time.
 }
@@ -340,6 +347,54 @@ older floor. `scanned_at` only grows, so an older floor pins a superset of
 what the right one would. Mistaking one claim for another can only make
 the scan keep more, never free early.
 
+### 5.2. The publish number a loan reports
+
+**The guarantee.** If a loan reports `seq() == k`, its value is the one
+published as number `k` or a later one. So the number is never newer than the
+value: a reader can be told "changed" for a change it already holds, and is
+never told "unchanged" over one it has missed.
+
+A publish makes number `n` as two writes in program order, under the mutex:
+`X_n`, the swap of `current` (`Release`), then `N_n`, the store of `n` to
+`published_seq` (`Release`). A lend sequences `Q`, a load of `published_seq`
+(`Acquire`), before `R`, its load of `current`.
+
+*Why `R` does not read older than `X_k`.* Say `Q` reads the store `N_k`,
+so the loan reports `k`. `N_k` synchronizes with `Q`, and `X_k` is
+sequenced before `N_k`, so `X_k` happens before `R`, which `Q` precedes. By
+write-read coherence ([intro.races]) `R` reads `X_k` or a later write of
+`current`, so the value is number `k` or a later one. The swaps and the
+stores to `published_seq` are in the same order, since the mutex serializes
+publishers and each releases it after its pair of writes. (A cell made with
+number 0 has no `N_0`: `Q` reads the initial value, and every value is number
+0 or later.)
+
+*Why the number can trail the value.* `R` can read a swap `X_m` whose `N_m`
+`Q` did not see, because `Q` came first or the publisher was between the two
+writes. The loan then reports a number below `m`, and the lend after it
+reports `m` or later. This is the one-sided error the contract allows.
+
+*Why a reader misses nothing for good.* A reader's loads of `published_seq`
+read it in modification order (read-read coherence), so its numbers never go
+down. Once publishing stops with the last number `n`, every store is
+eventually visible, and a lend that starts after `N_n` is visible reads `n`
+at `Q` and the final value at `R`. A reader that compares each number with
+the last it saw therefore sees a difference after each publish, at the
+latest on its first lend after publishing ends.
+
+*Why the load does not weaken §5's protocol.* `Q` is a load of an integer
+that is never dereferenced and never announced. Step 1 of §5 rests on `C`,
+`Fr` and `R` and their program order; `Q` sits between `Fr` and `R` and adds
+no edge those steps use, and the publisher's `N_n` is after `X_n` and before
+`Fp` in the publish, so it does not move `X_n` relative to `Fp`. A scan never
+reads `published_seq`: it reads `seq`, under the mutex.
+
+*Width.* On a target with 64-bit atomics `published_seq` is an `AtomicU64`.
+Without them it is an `AtomicUsize` holding the low 32 bits of `seq`; the
+reported number then wraps at 2^32 publishes, and a reader that lends less
+often than that could see a number repeat. `seq` itself, which the scan
+uses, stays a `u64` under the mutex.
+
 ## 6. What a reader can pin
 
 An announcement pins one value, so loans held across iterations pin at
@@ -361,12 +416,13 @@ policy to the host.
 | Operation | Thread | What it does |
 |---|---|---|
 | `Publisher::reader` | control | the mutex; a walk for an unowned slot from where the last registration stopped; when every slot is owned, a new block that doubles the list (an allocation) |
-| `Reader::lend` | reader | a `Release` store, a `SeqCst` fence, an `Acquire` load and a `Relaxed` store, all on the reader's own cache line except the load |
+| `Reader::lend` | reader | a `Release` store, a `SeqCst` fence, two `Acquire` loads (the publish number and the pointer, on one line) and a `Relaxed` store, all on the reader's own cache line except the loads |
 | drop a `Loan` | reader | one `Release` store |
 | drop a `Reader` | any | one `Release` store, and its share of the cell |
-| `Publisher::publish` | publisher | the mutex; a swap and a `SeqCst` fence; one `Acquire` load per slot; a sort of the announced addresses; one pass over the retired list; the frees, after the lock. It allocates only when the retired list grows or the reused free buffer is too small |
+| `Publisher::publish` | publisher | the mutex; a swap, a store of the publish number and a `SeqCst` fence; one `Acquire` load per slot; a sort of the announced addresses; one pass over the retired list; the frees, after the lock. It allocates only when the retired list grows or the reused free buffer is too small |
 | `Publisher::reclaim` | publisher | a publish without the swap, or the mutex alone when nothing is retired |
 | `Publisher::current` | publisher | the mutex and a strong-count increment |
+| `Publisher::seq` | publisher | the mutex |
 | `Publisher::retired_len` | publisher | the mutex |
 
 Memory is the pointer and one cache line per slot (128 bytes on x86-64 and

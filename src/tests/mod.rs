@@ -79,5 +79,6 @@ mod auto_traits;
 mod claims;
 mod publisher;
 mod reclaim;
+mod seq;
 mod slots;
 mod stress;

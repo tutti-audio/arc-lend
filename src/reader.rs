@@ -148,6 +148,12 @@ impl<T> Reader<T> {
         // dangling pointer.
         fence(Ordering::SeqCst);
 
+        // The publish number, before the value, so the value is the one it
+        // names or a later one (`docs::design`, §5.2). After the fence, so the
+        // claim/announce protocol above is untouched: this load takes no part
+        // in it.
+        let seq = self.cell.current.load_seq();
+
         // `Acquire`, pairing with the publisher's `Release` swap.
         let value = self.cell.current.load();
 
@@ -160,6 +166,7 @@ impl<T> Reader<T> {
         Loan {
             slot,
             value,
+            seq,
             _not_send: PhantomData,
         }
     }
@@ -207,10 +214,87 @@ pub struct Loan<'a, T> {
     /// Value the reader loaded, kept alive by the announcement rather than a
     /// refcount.
     value: NonNull<T>,
+    /// The publish number loaded just before `value`.
+    seq: u64,
     /// `*const ()` is neither `Send` nor `Sync`, which is what pins the loan
     /// to the thread that took it. (`NonNull` alone would do the same; this
     /// says so on purpose rather than by accident of representation.)
     _not_send: PhantomData<*const ()>,
+}
+
+impl<T> Loan<'_, T> {
+    /// Returns the publish number this loan reports: that of the lent value,
+    /// or of an earlier one.
+    ///
+    /// The value given to [`Publisher::new`](crate::Publisher::new) or
+    /// [`Publisher::from_arc`](crate::Publisher::from_arc) is number 0, and
+    /// each [`publish`](crate::Publisher::publish) makes the next number: 1,
+    /// 2, and so on. The number is read with the value, wait-free, and costs
+    /// one more load per lend. It is a *sequence number*, a count of publishes
+    /// of the cell: unlike the slot generation a reader keeps for its own
+    /// lends, it is the same for every reader.
+    ///
+    /// # What it promises
+    ///
+    /// The number is that of the lent value or of an earlier one, never a
+    /// later one: if `loan.seq() == k`, the value is the one published as
+    /// number `k` or a later one. So the number can say a change happened
+    /// when this loan already shows it, and can never hide one:
+    ///
+    /// - A reader that saw `n` and now sees `m > n` knows something was
+    ///   published in between.
+    /// - A reader that sees `n` again may still hold a value published after
+    ///   number `n`, if a publish landed between the lend's two loads. Its
+    ///   next lend then reports a newer number.
+    /// - A reader that compares each lend's number with the last one it saw
+    ///   misses no change for good: once publishing stops, its next lend
+    ///   reports the final number, with the final value.
+    /// - One reader's numbers never go down from one lend to the next.
+    ///
+    /// Compare for inequality, not for order across readers: two readers
+    /// that lend at the same moment may report different numbers for the
+    /// same value.
+    ///
+    /// # Wrapping
+    ///
+    /// The number is a `u64` and counts publishes; it does not wrap in any
+    /// run that fits in a lifetime. On a target without 64-bit atomics it is
+    /// kept in a `usize`, and wraps at 2^32 publishes: a reader that lends
+    /// less often than once in 2^32 publishes may then see the same number
+    /// again.
+    ///
+    /// # Examples
+    ///
+    /// A reader that rebuilds something derived from the value only when
+    /// it has changed:
+    ///
+    /// ```
+    /// use arc_lend::Publisher;
+    ///
+    /// let publisher = Publisher::new(vec![1.0f32; 4]);
+    /// let mut reader = publisher.reader();
+    ///
+    /// let mut last = None;
+    /// let mut rebuilds = 0;
+    /// for iteration in 0..4 {
+    ///     if iteration == 2 {
+    ///         publisher.publish(vec![0.5f32; 4]);
+    ///     }
+    ///     let gains = reader.lend();
+    ///     if last != Some(gains.seq()) {
+    ///         last = Some(gains.seq());
+    ///         rebuilds += 1; // derive from `*gains` here
+    ///     }
+    /// }
+    /// // Once for the first value, once after the publish.
+    /// assert_eq!(rebuilds, 2);
+    /// assert_eq!(last, Some(1));
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
 }
 
 impl<T> Deref for Loan<'_, T> {
